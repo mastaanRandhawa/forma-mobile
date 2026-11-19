@@ -1,5 +1,9 @@
+import { useContext } from "react";
 import { useTheme } from "@/theme/theme-provider";
-import { Text as RNText, type TextProps, type TextStyle } from "react-native";
+import { StyleSheet, Text as RNText, type StyleProp, type TextProps, type TextStyle } from "react-native";
+import Animated, { interpolateColor, useAnimatedStyle, type SharedValue } from "react-native-reanimated";
+import { withAlpha } from "@/lib/color";
+import { QuietCtx } from "./quiet-context";
 import { colors, fonts, type } from "@/theme/tokens";
 
 type Variant = keyof typeof type;
@@ -15,6 +19,15 @@ const colorOf: Record<Color, string> = {
   get danger() { return colors.danger; },
 };
 
+/** Text whose ink fades out while its enclosing <Quiet> is hiding values. */
+function QuietText({ q, style, ...rest }: TextProps & { q: SharedValue<number> }) {
+  const flat = StyleSheet.flatten(style) as TextStyle;
+  const on = typeof flat.color === "string" ? flat.color : colors.textPrimary;
+  const off = withAlpha(on, 0);
+  const fade = useAnimatedStyle(() => ({ color: interpolateColor(q.value, [0, 1], [on, off]) }));
+  return <Animated.Text {...rest} style={[flat, fade]} />;
+}
+
 export function Text({
   variant = "body",
   color = "primary",
@@ -22,7 +35,9 @@ export function Text({
   ...rest
 }: TextProps & { variant?: Variant; color?: Color }) {
   useTheme();
-  return <RNText {...rest} style={[type[variant] as TextStyle, { color: colorOf[color] }, style]} />;
+  const q = useContext(QuietCtx);
+  const merged: StyleProp<TextStyle> = [type[variant] as TextStyle, { color: colorOf[color] }, style];
+  return q ? <QuietText q={q} {...rest} style={merged} /> : <RNText {...rest} style={merged} />;
 }
 
 /** Numbers always use Space Grotesk with tabular figures. */
@@ -33,22 +48,19 @@ export function Num({
   ...rest
 }: TextProps & { size?: number; color?: Color }) {
   useTheme();
-  return (
-    <RNText
-      {...rest}
-      style={[
+  const q = useContext(QuietCtx);
+  const merged: StyleProp<TextStyle> = [
         {
           fontFamily: fonts.num,
           fontSize: size,
           lineHeight: size,
           letterSpacing: -size * 0.02,
-          fontVariant: ["tabular-nums"],
+          fontVariant: ["tabular-nums"] as TextStyle["fontVariant"],
           color: colorOf[color],
         },
-        style,
-      ]}
-    />
-  );
+    style,
+  ];
+  return q ? <QuietText q={q} {...rest} style={merged} /> : <RNText {...rest} style={merged} />;
 }
 
 /** Small uppercase-ish technical label. */

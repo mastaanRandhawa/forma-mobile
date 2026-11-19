@@ -4,6 +4,8 @@ import { RefreshControl, ScrollView, StyleSheet, View, type StyleProp, type View
 import { Atmosphere, useHasGlobalAtmosphere } from "./atmosphere";
 import { Reveal } from "./reveal";
 import { useNavChrome } from "@/components/nav-chrome";
+import { useSharedValue } from "react-native-reanimated";
+import { ScrollYCtx } from "./quiet-context";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors } from "@/theme/tokens";
 import { api } from "@/api/client";
@@ -28,6 +30,7 @@ export function Screen({ children, scroll = true, tabs = false, contentStyle, re
   useTheme();
   const hasGlobal = useHasGlobalAtmosphere();
   const nav = useNavChrome();
+  const scrollY = useSharedValue(0);
   const insets = useSafeAreaInsets();
   // same cache key as the workout pill, so tab screens share one request; other screens skip it
   const bar = useResource<WorkoutSession | null>(tabs ? "active-session" : "active-session:off", () =>
@@ -47,7 +50,10 @@ export function Screen({ children, scroll = true, tabs = false, contentStyle, re
           contentContainerStyle={[pad, contentStyle]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
-          onScroll={tabs ? nav.onScroll : undefined}
+          onScroll={(e) => {
+            scrollY.set(e.nativeEvent.contentOffset.y);
+            if (tabs) nav.onScroll(e);
+          }}
           scrollEventThrottle={16}
           refreshControl={
             onRefresh ? (
@@ -55,7 +61,9 @@ export function Screen({ children, scroll = true, tabs = false, contentStyle, re
             ) : undefined
           }
         >
-          {reveal ? Children.toArray(children).map((c, i) => <Reveal key={(c as { key?: string }).key ?? i} index={i}>{c}</Reveal>) : children}
+          <ScrollYCtx.Provider value={scrollY}>
+            {reveal ? Children.toArray(children).map((c, i) => <Reveal key={(c as { key?: string }).key ?? i} index={i}>{c}</Reveal>) : children}
+          </ScrollYCtx.Provider>
         </ScrollView>
       ) : (
         <View style={[{ flex: 1 }, pad, contentStyle]}>{children}</View>
