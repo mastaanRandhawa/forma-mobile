@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Animated,
   Easing,
@@ -20,11 +20,11 @@ import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient as SvgGradient, Path, Polyline, Rect, Stop, Line, Circle as SvgCircle, G } from "react-native-svg";
-import { colors, fonts, radius, toneColor, type Tone } from "@/theme/tokens";
+import { cardPad, colors, fonts, radius, toneColor, type Tone } from "@/theme/tokens";
 import { PressScale } from "./pressable";
 import { motion } from "@/lib/motion";
 import { Label, Text } from "./text";
-import { SoftSurface, RecessedSurface } from "./surface";
+import { SoftSurface, RecessedSurface, RaisedSurface } from "./surface";
 import { Button } from "./controls";
 
 /** Page header with back chevron, used by every pushed screen. */
@@ -382,13 +382,32 @@ export function SettingRow({ title, hint, right, onPress, icon }: { title: strin
   );
 }
 
-export function Card({ children, style, title }: { children: ReactNode; style?: StyleProp<ViewStyle>; title?: string }) {
-  return (
-    <SoftSurface style={[{ padding: 20, marginBottom: 16 }, style]}>
-      {title ? <Label style={{ marginBottom: 10 }}>{title.toUpperCase()}</Label> : null}
-      {children}
-    </SoftSurface>
-  );
+const CardDepth = createContext(0);
+
+export type CardVariant = "default" | "compact" | "hero" | "flat";
+
+/**
+ * Card — the one content surface.
+ *  default  20pt padding, soft gradient surface
+ *  compact  16pt, for previews and dense lists
+ *  hero     24pt raised surface, the single primary card on a screen
+ *  flat     no surface or padding, for grouping inside an existing card
+ * Cards never nest: a Card rendered inside another Card automatically drops to
+ * `flat`, so inner content reads as part of the outer card instead of a box in a box.
+ */
+export function Card({ children, style, title, variant = "default" }: { children: ReactNode; style?: StyleProp<ViewStyle>; title?: string; variant?: CardVariant }) {
+  const depth = useContext(CardDepth);
+  const kind: CardVariant = depth > 0 ? "flat" : variant;
+  const head = title ? <Label style={{ marginBottom: 10 }}>{title.toUpperCase()}</Label> : null;
+  let body: ReactNode;
+  if (kind === "flat") {
+    body = <View style={[{ marginBottom: depth > 0 ? 12 : 16 }, style]}>{head}{children}</View>;
+  } else if (kind === "hero") {
+    body = <RaisedSurface radiusSize="large" style={[{ padding: cardPad.hero, marginBottom: 16 }, style]}>{head}{children}</RaisedSurface>;
+  } else {
+    body = <SoftSurface radiusSize={kind === "compact" ? "medium" : "large"} style={[{ padding: kind === "compact" ? cardPad.compact : cardPad.default, marginBottom: 16 }, style]}>{head}{children}</SoftSurface>;
+  }
+  return <CardDepth.Provider value={depth + 1}>{body}</CardDepth.Provider>;
 }
 
 export function Segmented<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void }) {
@@ -406,12 +425,25 @@ export function Segmented<T extends string>({ value, options, onChange }: { valu
   );
 }
 
+/**
+ * EmptyState — nothing here yet. With a next action it is a card (title, one
+ * line, button); without one it's just a quiet centered line, never an
+ * oversized box around a single sentence.
+ */
 export function EmptyState({ title, body, action, onAction }: { title: string; body?: string; action?: string; onAction?: () => void }) {
+  if (!action) {
+    return (
+      <View style={{ alignItems: "center", paddingVertical: 18, gap: 4 }}>
+        <Text color="secondary" style={{ textAlign: "center" }}>{title}</Text>
+        {body ? <Text variant="meta" color="tertiary" style={{ textAlign: "center" }}>{body}</Text> : null}
+      </View>
+    );
+  }
   return (
-    <RecessedSurface radiusSize="large" style={{ padding: 28, alignItems: "center", gap: 8 }}>
-      <Text variant="heading" style={{ textAlign: "center" }}>{title}</Text>
+    <RecessedSurface radiusSize="large" style={{ padding: 22, alignItems: "center", gap: 6 }}>
+      <Text variant="cardTitle" style={{ textAlign: "center" }}>{title}</Text>
       {body ? <Text color="secondary" style={{ textAlign: "center" }}>{body}</Text> : null}
-      {action ? <View style={{ marginTop: 10, alignSelf: "stretch" }}><Button label={action} onPress={onAction} /></View> : null}
+      <View style={{ marginTop: 12, alignSelf: "stretch" }}><Button label={action} onPress={onAction} /></View>
     </RecessedSurface>
   );
 }
