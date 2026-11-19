@@ -113,7 +113,7 @@ export default function Nutrition() {
           <ProfileMenu />
         </View>
       </View>
-      <Segmented value={tab} onChange={setTab} options={[{ value: "today", label: "Food log" }, { value: "trends", label: "Trends" }]} />
+      <TourTarget id="nutrition-tabs"><Segmented value={tab} onChange={setTab} options={[{ value: "today", label: "Food log" }, { value: "trends", label: "Trends" }]} /></TourTarget>
 
       {tab === "today" ? (
         <View style={{ marginTop: 14, gap: 14 }}>
@@ -143,11 +143,11 @@ export default function Nutrition() {
                   <Text variant="section">Food log</Text>
                   {total ? <Text variant="meta" color="tertiary">Swipe left to delete</Text> : null}
                 </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -20 }} contentContainerStyle={{ gap: 8, paddingHorizontal: 20, paddingVertical: 4 }}>
+                <TourTarget id="nutrition-quick"><ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -20 }} contentContainerStyle={{ gap: 8, paddingHorizontal: 20, paddingVertical: 4 }}>
                   <Chip label="Quick add" onPress={() => setAdd({ open: true, meal: mealForNow(), tab: "manual" })} />
                   <Chip label="Scan barcode" onPress={() => setAdd({ open: true, meal: mealForNow(), tab: "scan" })} />
                   <Chip label={copying ? "Copying…" : `Copy ${isToday ? "yesterday" : "day before"}`} onPress={copyPrev} />
-                </ScrollView>
+                </ScrollView></TourTarget>
               </View>
               {total === 0 ? <EmptyState title="Nothing logged yet" body={`Search a food, scan a barcode or add it manually for ${fmtDay(date)}.`} action="Add food" onAction={() => setAdd({ open: true, meal: mealForNow() })} /> : null}
               {MEALS.map((meal) => {

@@ -193,7 +193,7 @@ export default function Workouts() {
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
         <Text variant="title">Train</Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          <PopoverMenu
+          <TourTarget id="train-insights"><PopoverMenu
             accessibilityLabel="Training insights and tools"
             items={[
               ...(prog.has("progress_basic") ? [{ key: "progress", label: "Progress", icon: "stats-chart-outline" as const, hint: "Trends, strength, recovery", onPress: () => router.push("/progress") }] : []),
@@ -208,8 +208,8 @@ export default function Workouts() {
                 <Ionicons name={open ? "chevron-up" : "chevron-down"} size={14} color={colors.textSecondary} />
               </View>
             )}
-          />
-          <Chip label="+ Create" active onPress={() => router.push("/workout/builder")} />
+          /></TourTarget>
+          <TourTarget id="train-create"><Chip label="+ Create" active onPress={() => router.push("/workout/builder")} /></TourTarget>
           <ProfileMenu />
         </View>
       </View>
@@ -256,10 +256,12 @@ export default function Workouts() {
                   ))}
                   {today.exercises.length > 5 ? <Text variant="meta" color="tertiary">+{today.exercises.length - 5} more exercises</Text> : null}
                 </View>
-                <View style={{ flexDirection: "row", gap: 10, marginTop: 18 }}>
+                <TourTarget id="train-start" style={{ marginTop: 18 }}>
+                <View style={{ flexDirection: "row", gap: 10 }}>
                   <View style={{ flex: 1 }}><Button label={active.data ? "Resume workout" : "Start workout"} loading={busy === `start:${today.id}`} onPress={() => (active.data ? openActive() : startRow(workoutToRow(today)))} /></View>
                   <Button label="Quick start" variant="secondary" loading={busy === "quick"} onPress={quick} style={{ paddingHorizontal: 18 }} />
                 </View>
+                </TourTarget>
               </>
             ) : (
               <>

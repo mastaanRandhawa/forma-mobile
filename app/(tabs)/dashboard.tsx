@@ -210,7 +210,7 @@ export default function Dashboard() {
         {dash.error && !d ? <View style={{ marginBottom: 20 }}><ErrorState message={errorMessage(dash.error)} onRetry={dash.refetch} /></View> : null}
 
         <View style={{ marginBottom: 20 }}>
-          <Quiet widgetKey="readiness">
+          <TourTarget id="home-readiness"><Quiet widgetKey="readiness">
             <ReadinessCard
               loading={dash.initialLoading}
               score={hasRecovery ? score : null}
@@ -223,7 +223,7 @@ export default function Dashboard() {
               onCheckIn={() => setCheckin(true)}
               onOpen={(id) => setDetail(details[id])}
             />
-          </Quiet>
+          </Quiet></TourTarget>
         </View>
 
         <View style={{ marginBottom: 20 }}>

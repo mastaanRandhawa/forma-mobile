@@ -172,7 +172,7 @@ export default function TrainerTab() {
             <Text variant="heading">{name}</Text>
             <Text variant="meta" color="tertiary">Online · replies in seconds</Text>
           </View>
-          <Pressable onPress={() => setMenu(true)} hitSlop={4} accessibilityRole="button" accessibilityLabel={`${name} actions`} style={{ width: 44, height: 44, alignItems: "center", justifyContent: "center", marginRight: -8 }}><Ionicons name="ellipsis-horizontal" size={22} color={colors.textSecondary} /></Pressable>
+          <TourTarget id="coach-menu"><Pressable onPress={() => setMenu(true)} hitSlop={4} accessibilityRole="button" accessibilityLabel={`${name} actions`} style={{ width: 44, height: 44, alignItems: "center", justifyContent: "center", marginRight: -8 }}><Ionicons name="ellipsis-horizontal" size={22} color={colors.textSecondary} /></Pressable></TourTarget>
         </View>
 
         <ScrollView ref={scroll} contentContainerStyle={{ padding: 20, gap: 8, paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
