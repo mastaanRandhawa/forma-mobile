@@ -59,7 +59,9 @@ function TabItem({ meta, index, active, pos, minimized, onPress, onKey }: { meta
   const box = useAnimatedStyle(() => ({ height: interpolate(minimized.value, [0, 1], [ITEM_FULL, ITEM_MIN]) }));
   const icon = useAnimatedStyle(() => ({ transform: [{ scale: 1 + near.value * 0.12 }, { translateY: -near.value * 1.5 * (1 - minimized.value) }] }));
   const label = useAnimatedStyle(() => ({ opacity: (0.6 + near.value * 0.4) * (1 - minimized.value), height: 12 * (1 - minimized.value), marginTop: 2 * (1 - minimized.value) }));
-  const tint = useAnimatedStyle(() => ({ color: interpolateColor(near.value, [0, 1], [colors.textTertiary, colors.textPrimary]) }));
+  const tintOff = colors.textTertiary;
+  const tintOn = colors.textPrimary;
+  const tint = useAnimatedStyle(() => ({ color: interpolateColor(near.value, [0, 1], [tintOff, tintOn]) }));
   const keys = { onKeyDown: (e: { key: string; preventDefault?: () => void }) => {
     if (e.key === "ArrowLeft") { e.preventDefault?.(); onKey(-1); }
     else if (e.key === "ArrowRight") { e.preventDefault?.(); onKey(1); }
@@ -132,11 +134,13 @@ export function TabDock({ state, navigateToTab }: BottomTabBarProps) {
     const build = (g: ReturnType<typeof Gesture.Pan>) =>
       g
         .onStart(() => {
+          "worklet";
           dragging.set(1);
           pressed.set(withTiming(1, { duration: 120 }));
           runOnJS(lift)();
         })
         .onUpdate((e) => {
+          "worklet";
           const frac = clamp((e.x - PAD) / slot.value - 0.5, 0, n - 1);
           pos.set(frac);
           const h = Math.round(frac);
@@ -146,6 +150,7 @@ export function TabDock({ state, navigateToTab }: BottomTabBarProps) {
           }
         })
         .onFinalize(() => {
+          "worklet";
           if (dragging.value === 0) return;
           dragging.set(0);
           pressed.set(withTiming(0, { duration: 160 }));

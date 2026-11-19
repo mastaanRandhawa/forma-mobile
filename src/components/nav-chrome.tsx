@@ -34,7 +34,7 @@ const go = (sv: SharedValue<number>, to: number) => {
 
 export function NavChromeProvider({ children }: { children: ReactNode }) {
   const prefs = useDevicePrefs();
-  const mode = prefs.navMode ?? "auto";
+  const mode = prefs.navMode ?? "expanded";
   const minimized = useSharedValue(mode === "minimized" ? 1 : 0);
   const last = useRef(0);
   const state = useRef(mode === "minimized" ? 1 : 0);

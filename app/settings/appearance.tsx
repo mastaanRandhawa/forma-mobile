@@ -27,7 +27,7 @@ export default function AppearanceSettings() {
   const theme = THEME_MAP[cz.equipped.theme];
   const mode = cz.equipped.colorMode ?? "cm-system";
   const devicePrefs = useDevicePrefs();
-  const navMode = devicePrefs.navMode ?? "auto";
+  const navMode = devicePrefs.navMode ?? "expanded";
   return (
     <Screen>
       <PageHeader title="Appearance" />
@@ -58,8 +58,8 @@ export default function AppearanceSettings() {
         </Pressable>
       </Card>
       <Card title="Navigation bar">
-        <Text color="secondary" style={{ marginBottom: 12 }}>The tab bar can shrink to a compact icon-only pill while you scroll, then return when you scroll back up. Tap the active icon to expand it.</Text>
-        <Segmented value={navMode} onChange={(v) => setDevicePrefs({ navMode: v })} options={[{ value: "auto", label: "Auto" }, { value: "expanded", label: "Always full" }, { value: "minimized", label: "Compact" }]} />
+        <Text color="secondary" style={{ marginBottom: 12 }}>The tab bar stays full size by default. You can have it shrink to a compact icon-only pill while you scroll down, or keep it compact all the time.</Text>
+        <Segmented value={navMode} onChange={(v) => setDevicePrefs({ navMode: v })} options={[{ value: "expanded", label: "Always full" }, { value: "auto", label: "Shrink on scroll" }, { value: "minimized", label: "Compact" }]} />
       </Card>
       <Card title="Motion">
         <SettingRow last title="Reduce motion" hint="Minimize animation and ambient theme effects across the app." right={<Toggle value={appearance.reduceMotion} onChange={(v) => update({ appearance: { reduceMotion: v } })} />} />

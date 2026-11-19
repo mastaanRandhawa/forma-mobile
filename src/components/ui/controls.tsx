@@ -63,8 +63,13 @@ export function Field({ label, error, right, style, ...rest }: FieldProps) {
   useEffect(() => {
     if (error && !motion.reduced) shake.value = withSequence(withTiming(-6, { duration: 55 }), withTiming(6, { duration: 80 }), withTiming(-4, { duration: 70 }), withTiming(0, { duration: 60 }));
   }, [error, shake]);
+  // resolved here (JS thread) and captured by value — worklets can't call JS helpers
+  // or read the live theme object
+  const ringIdle = colors.hairline;
+  const focusRing = withAlpha(colors.pink, 0.75);
+  const danger = colors.danger;
   const ring = useAnimatedStyle(() => ({
-    borderColor: error ? colors.danger : interpolateColor(f.value, [0, 1], [colors.hairline, withAlpha(colors.pink, 0.75)]),
+    borderColor: error ? danger : interpolateColor(f.value, [0, 1], [ringIdle, focusRing]),
     transform: [{ translateX: shake.value }],
   }));
   return (
@@ -98,7 +103,9 @@ export function Chip({ label, active, onPress }: { label: string; active?: boole
     a.value = withTiming(active ? 1 : 0, { duration: motion.reduced ? 0 : 200, easing: EASE_LUXURY });
   }, [active, a]);
   const bg = useAnimatedStyle(() => ({ opacity: a.value }));
-  const ink = useAnimatedStyle(() => ({ color: interpolateColor(a.value, [0, 1], [colors.textSecondary, colors.btnWhiteInk]) }));
+  const inkOff = colors.textSecondary;
+  const inkOn = colors.btnWhiteInk;
+  const ink = useAnimatedStyle(() => ({ color: interpolateColor(a.value, [0, 1], [inkOff, inkOn]) }));
   return (
     <PressScale onPress={onPress} to={0.95} accessibilityRole="button" accessibilityState={{ selected: !!active }} style={{ paddingHorizontal: 14, height: 36, borderRadius: radius.pill, justifyContent: "center", overflow: "hidden", backgroundColor: colors.surface, borderWidth: 1, borderColor: active ? "transparent" : colors.lineSoft }}>
       <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: colors.btnWhite }, bg]} />

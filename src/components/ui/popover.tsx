@@ -7,7 +7,7 @@
 import { useRef, useState, type ComponentRef, type ReactNode } from "react";
 import { Dimensions, Modal, Pressable, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 import { useTheme } from "@/theme/theme-provider";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
@@ -53,15 +53,13 @@ export function PopoverMenu({
     });
   };
   const hide = (after?: () => void) => {
+    // the completion callback runs on the UI thread — hop back to JS to unmount
     p.set(withTiming(0, { duration: motion.reduced ? 0 : 120 }, (done) => {
-      if (done) {
-        // eslint-disable-next-line @typescript-eslint/no-use-before-define
-        runClose();
-      }
+      "worklet";
+      if (done) runOnJS(setOpen)(false);
     }));
     if (after) setTimeout(after, motion.reduced ? 0 : 150);
   };
-  const runClose = () => setOpen(false);
 
   const menu = useAnimatedStyle(() => ({
     opacity: p.value,
