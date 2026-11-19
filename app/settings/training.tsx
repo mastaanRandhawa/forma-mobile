@@ -10,6 +10,11 @@ import { Screen } from "@/components/ui/screen";
 import { Card, PageHeader, SettingRow, Segmented } from "@/components/ui/extra";
 import { Button, Chip } from "@/components/ui/controls";
 import { Label, Text } from "@/components/ui/text";
+import { setDevicePrefs, useDevicePrefs } from "@/lib/device-prefs";
+import { syncWorkoutReminders } from "@/lib/reminders";
+import { usePrefs } from "@/api/settings";
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export default function TrainingProfile() {
   useTheme();
@@ -19,6 +24,13 @@ export default function TrainingProfile() {
   const [injuries, setInjuries] = useState<InjuryNote[]>([]);
   const [injury, setInjury] = useState("");
   const [weight, setWeight] = useState("");
+  const device = useDevicePrefs();
+  const prefs = usePrefs();
+  const toggleDay = (d: number) => {
+    const next = device.preferredDays.includes(d) ? device.preferredDays.filter((x) => x !== d) : [...device.preferredDays, d].sort();
+    setDevicePrefs({ preferredDays: next });
+    void syncWorkoutReminders({ enabled: prefs.notifications.workoutReminders, days: next, hour: device.reminderHour, minute: device.reminderMinute });
+  };
 
   useEffect(() => {
     api.me.equipment().then(setEquipment).catch(() => {});
@@ -65,6 +77,15 @@ export default function TrainingProfile() {
         {open === "freq" && (
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, paddingBottom: 12 }}>
             {DAYS.map((d) => <Chip key={d} label={`${d} days`} active={user.trainingFrequencyTarget === d} onPress={() => save({ trainingFrequencyTarget: d })} />)}
+          </View>
+        )}
+        <SettingRow title="Preferred training days" hint={device.preferredDays.length ? device.preferredDays.map((d) => WEEKDAYS[d]).join(", ") : "Not set"} onPress={() => toggleRow("days")} />
+        {open === "days" && (
+          <View style={{ gap: 8, paddingBottom: 12 }}>
+            <View style={{ flexDirection: "row", gap: 6 }}>
+              {WEEKDAYS.map((d, i) => <View key={d} style={{ flex: 1 }}><Chip label={d.slice(0, 2)} active={device.preferredDays.includes(i)} onPress={() => toggleDay(i)} /></View>)}
+            </View>
+            <Text variant="meta" color="tertiary">Shown as planned days on your calendar and used for workout reminders. Saved on this device.</Text>
           </View>
         )}
         <SettingRow title="Session length" hint={user.sessionLengthTargetMin ? `${user.sessionLengthTargetMin} min` : "Not set"} onPress={() => toggleRow("len")} />

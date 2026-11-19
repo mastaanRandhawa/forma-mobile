@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { View } from "react-native";
-import { Link } from "expo-router";
+import { Link, useRouter } from "expo-router";
 import { auth } from "@/api/client";
 import { mapAuthError } from "@/auth/errors";
 import { AuthShell } from "@/components/ui/auth-shell";
@@ -12,12 +12,15 @@ export default function ForgotPassword() {
   const [pending, setPending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [devToken, setDevToken] = useState<string | undefined>();
+  const router = useRouter();
 
   async function submit() {
     setPending(true);
     setError(null);
     try {
-      await auth.forgotPassword(email.trim());
+      const r = await auth.forgotPassword(email.trim());
+      setDevToken(r.devToken);
       setSent(true);
     } catch (e) {
       setError(mapAuthError(e));
@@ -37,7 +40,12 @@ export default function ForgotPassword() {
       }
     >
       {sent ? (
-        <Text color="secondary">If an account exists for {email.trim()}, a reset link is on its way. It expires soon, so use it right away.</Text>
+        <>
+          <Text color="secondary">If an account exists for {email.trim()}, a reset link is on its way. It expires soon, so use it right away.</Text>
+          <Button label="I have the link" variant="ghost" onPress={() => router.push("/reset-password")} />
+          {__DEV__ && devToken ? <Button label="Dev: open reset screen" variant="ghost" onPress={() => router.push({ pathname: "/reset-password", params: { token: devToken } })} /> : null}
+          <Button label="Send again" variant="ghost" onPress={() => { setSent(false); }} />
+        </>
       ) : (
         <>
           <Field label="email" value={email} onChangeText={setEmail} autoCapitalize="none" autoComplete="email" keyboardType="email-address" />

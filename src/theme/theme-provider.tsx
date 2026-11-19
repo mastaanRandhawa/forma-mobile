@@ -3,6 +3,7 @@ import { useColorScheme } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { api } from "@/api/client";
 import { colors, applyThemeVars } from "./tokens";
+import { ensureContrast, inkOn } from "@/lib/color";
 import { ACCENT_MAP, THEME_MAP, resolveColorMode, resolveThemeId, onLight, type ColorMode, type ThemeEffect } from "./themes";
 import { customizationItems, type CustomizationItem, type CustomizationSlot } from "./catalog";
 
@@ -63,12 +64,15 @@ function resolveEffect(themeId: string, effectId: string): ThemeEffect {
 function paint(equipped: Record<CustomizationSlot, string>, system: ColorMode) {
   const theme = THEME_MAP[resolveThemeId(equipped.theme)];
   const mode = resolveColorMode(equipped.colorMode, system);
-  applyThemeVars(mode === "light" ? theme.varsLight : theme.vars);
+  const vars = mode === "light" ? theme.varsLight : theme.vars;
+  applyThemeVars(vars, mode);
   const accent = ACCENT_MAP[equipped.accent];
-  if (accent && accent.id !== "ac-brand") {
-    const a = mode === "light" ? onLight(accent.color) : accent.color;
-    applyThemeVars({ "--accent-pink": a, "--accent-coral": a });
-  }
+  // A picked accent keeps its hue but is re-tuned per mode: darkened on light
+  // grounds, lifted on dark ones, until it clears 3:1 against the page.
+  const base = accent && accent.id !== "ac-brand" ? accent.color : vars["--accent-pink"];
+  const tuned = ensureContrast(mode === "light" ? onLight(base) : base, vars["--background"], 3);
+  applyThemeVars({ "--accent-pink": tuned, "--accent-coral": accent && accent.id !== "ac-brand" ? tuned : vars["--accent-coral"] });
+  colors.onAccent = inkOn(tuned);
   return { mode, effect: resolveEffect(theme.id, equipped.effect) };
 }
 

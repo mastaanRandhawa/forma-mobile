@@ -43,12 +43,56 @@ async function resolveExerciseId(name: string): Promise<string | null> {
   }
 }
 
+// The API has no RPE / warm-up fields on a workout exercise, so they ride in
+// the notes as "cue · RPE 8 · warm-up set" and are parsed back on load.
+const RPE_RE = /(?:^|\s·\s)RPE (\d+(?:\.\d)?)/;
+const WARM_RE = /(?:^|\s·\s)warm-up set/;
+export function encodeNotes(e: Pick<TemplateExercise, "note" | "rpe" | "warmup">): string | undefined {
+  const parts = [e.note?.trim() || null, e.rpe != null ? `RPE ${e.rpe}` : null, e.warmup ? "warm-up set" : null].filter(Boolean);
+  return parts.length ? parts.join(" · ") : undefined;
+}
+export function decodeNotes(notes: string | null | undefined): Pick<TemplateExercise, "note" | "rpe" | "warmup"> {
+  if (!notes) return {};
+  const rpe = notes.match(RPE_RE);
+  const warmup = WARM_RE.test(notes);
+  const note = notes.replace(RPE_RE, "").replace(WARM_RE, "").replace(/^\s·\s|\s·\s$/g, "").trim();
+  return { note: note || undefined, rpe: rpe ? Number(rpe[1]) : undefined, warmup: warmup || undefined };
+}
+
+/** Superset groups must be contiguous runs of 2+; renumber 1, 2, 3… in order. */
+export function normalizeSupersets<T extends { supersetGroup?: number | null }>(list: T[]): T[] {
+  const out = list.map((e) => ({ ...e }));
+  for (let i = 0; i < out.length; i++) {
+    const g = out[i].supersetGroup;
+    if (g == null) continue;
+    const linked = (i > 0 && out[i - 1].supersetGroup === g) || (i < out.length - 1 && out[i + 1].supersetGroup === g);
+    if (!linked) out[i].supersetGroup = undefined;
+  }
+  let next = 0;
+  let prevOriginal: number | null | undefined;
+  for (const e of out) {
+    const g = e.supersetGroup;
+    if (g == null) {
+      prevOriginal = undefined;
+      continue;
+    }
+    if (g !== prevOriginal) next++;
+    prevOriginal = g;
+    e.supersetGroup = next;
+  }
+  return out;
+}
+
 async function toWorkoutExercises(exercises: TemplateExercise[]) {
   const out: NonNullable<WorkoutInput["exercises"]> = [];
+  const missing: string[] = [];
   let order = 0;
-  for (const e of exercises) {
-    const id = await resolveExerciseId(e.name);
-    if (!id) continue;
+  for (const e of normalizeSupersets(exercises)) {
+    const id = e.exerciseId ?? (await resolveExerciseId(e.name));
+    if (!id) {
+      missing.push(e.name);
+      continue;
+    }
     out.push({
       exerciseId: id,
       order: order++,
@@ -56,24 +100,30 @@ async function toWorkoutExercises(exercises: TemplateExercise[]) {
       targetRepsMin: e.repsMin,
       targetRepsMax: e.repsMax,
       targetRestSec: e.restSec,
-      notes: e.note,
+      notes: encodeNotes(e),
       supersetGroup: e.supersetGroup ?? null,
       supersetType: e.supersetGroup != null ? "superset" : "straight",
     });
   }
+  if (!out.length && exercises.length) throw new Error("None of these exercises were found in the library.");
   return out;
 }
 
 export function workoutToExercises(w: Workout): TemplateExercise[] {
-  return w.exercises.map((we) => ({
+  return [...w.exercises].sort((a, b) => a.order - b.order).map((we) => ({
     name: we.exercise.name,
+    exerciseId: we.exerciseId,
     sets: we.targetSets,
     repsMin: we.targetRepsMin ?? 8,
     repsMax: we.targetRepsMax ?? we.targetRepsMin ?? 12,
     restSec: we.targetRestSec ?? 90,
-    note: we.notes ?? undefined,
+    ...decodeNotes(we.notes),
     supersetGroup: we.supersetGroup ?? undefined,
   }));
+}
+
+export async function renameTemplate(id: string, name: string): Promise<TemplateRow> {
+  return workoutToRow(await api.workouts.update(id, { name }));
 }
 
 export function workoutToRow(w: Workout): TemplateRow {

@@ -11,6 +11,18 @@
 import type * as T from "./types";
 
 import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
+
+// expo-secure-store has no web implementation; the web build falls back to
+// localStorage so a refresh doesn't sign you out. Native always uses the keychain.
+const tokenStore =
+  Platform.OS === "web"
+    ? {
+        getItemAsync: async (k: string) => globalThis.localStorage?.getItem(k) ?? null,
+        setItemAsync: async (k: string, v: string) => globalThis.localStorage?.setItem(k, v),
+        deleteItemAsync: async (k: string) => globalThis.localStorage?.removeItem(k),
+      }
+    : SecureStore;
 
 export const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:4000/api/v1";
 
@@ -35,7 +47,7 @@ const listeners = new Set<(authed: boolean) => void>();
 
 function persist() {
   const write = (k: string, v: string | null) =>
-    (v ? SecureStore.setItemAsync(k, v) : SecureStore.deleteItemAsync(k)).catch(() => {});
+    (v ? tokenStore.setItemAsync(k, v) : tokenStore.deleteItemAsync(k)).catch(() => {});
   void write(ACCESS_KEY, accessToken);
   void write(REFRESH_KEY, refreshToken);
 }
@@ -55,8 +67,8 @@ export const session = {
   async restore(): Promise<boolean> {
     restoreAttempted = true;
     try {
-      accessToken ??= await SecureStore.getItemAsync(ACCESS_KEY);
-      refreshToken ??= await SecureStore.getItemAsync(REFRESH_KEY);
+      accessToken ??= await tokenStore.getItemAsync(ACCESS_KEY);
+      refreshToken ??= await tokenStore.getItemAsync(REFRESH_KEY);
     } catch {
       /* keychain unavailable */
     }
@@ -71,6 +83,45 @@ export const session = {
     return () => void listeners.delete(fn);
   },
   clear: () => setTokens(null),
+};
+
+// ── connectivity ────────────────────────────────────────────────────────────
+// Tracks whether the API is reachable, from real request outcomes (no extra
+// dependency). A failed fetch flips to offline and starts a light /health
+// probe; any response flips back. Drives the app-wide offline banner.
+let online = true;
+let probe: ReturnType<typeof setInterval> | null = null;
+const netListeners = new Set<(online: boolean) => void>();
+function setOnline(next: boolean) {
+  if (next === online) return;
+  online = next;
+  netListeners.forEach((l) => l(online));
+  if (!online && !probe) {
+    probe = setInterval(() => {
+      fetch(`${BASE_URL}/health`).then((r) => r.ok && setOnline(true)).catch(() => {});
+    }, 8000);
+  }
+  if (online && probe) {
+    clearInterval(probe);
+    probe = null;
+  }
+}
+export const network = {
+  isOnline: () => online,
+  subscribe(fn: (online: boolean) => void) {
+    netListeners.add(fn);
+    return () => void netListeners.delete(fn);
+  },
+  /** Force a reachability check now (e.g. the banner's "retry"). */
+  async check() {
+    try {
+      const r = await fetch(`${BASE_URL}/health`);
+      setOnline(r.ok);
+    } catch {
+      setOnline(false);
+    }
+    return online;
+  },
 };
 
 // ── error type ──────────────────────────────────────────────────────────────
@@ -140,11 +191,18 @@ async function request<R>(path: string, opts: Opts = {}): Promise<R> {
   if (body !== undefined) headers["content-type"] = "application/json";
   if (auth && accessToken) headers.authorization = `Bearer ${accessToken}`;
 
-  const res = await fetch(url, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    setOnline(false);
+    throw new ApiRequestError(0, { error: { code: "network", message: "Can't reach the server. Check your connection." } } as T.ApiError);
+  }
+  setOnline(true);
 
   if (res.status === 401 && auth && !opts._retry && (await doRefresh())) {
     return request<R>(path, { ...opts, _retry: true });

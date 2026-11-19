@@ -1,131 +1,279 @@
-import { useEffect, useState } from "react";
-import { Alert, Pressable, TextInput, View } from "react-native";
+/**
+ * Workout builder — create / edit a template, or customize a prebuilt preset
+ * (website: pages/WorkoutBuilder.tsx). Drafts autosave on-device so leaving
+ * mid-edit never loses work; reopening restores them with a "start over" option.
+ */
+import { useEffect, useRef, useState } from "react";
+import { Alert, LayoutAnimation, Platform, Pressable, TextInput, UIManager, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { api } from "@/api/client";
-import { invalidateResource } from "@/api/hooks";
-import { templateDurationMin, templateExerciseTarget, type TemplateExercise } from "@/lib/workout-templates";
-import { createTemplate, startFromRow, updateTemplate, workoutToExercises } from "@/lib/workouts";
+import { errorMessage, invalidateResource } from "@/api/hooks";
+import { readRaw, removeKey, writeJSON } from "@/lib/storage";
+import { templateById, templateDurationMin, type TemplateExercise } from "@/lib/workout-templates";
+import { createTemplate, normalizeSupersets, startFromRow, updateTemplate, workoutToExercises } from "@/lib/workouts";
+import { supersetLetter } from "@/lib/active-session";
 import { useTheme } from "@/theme/theme-provider";
-import { colors, fonts } from "@/theme/tokens";
+import { colors, fonts, radius } from "@/theme/tokens";
+import { ExercisePicker, ExerciseThumb } from "@/components/exercise";
 import { Screen } from "@/components/ui/screen";
-import { Button, Chip, Field } from "@/components/ui/controls";
-import { Card, PageHeader } from "@/components/ui/extra";
-import { Label, Num, Text } from "@/components/ui/text";
-import { ExercisePicker } from "./active";
+import { Button, Field } from "@/components/ui/controls";
+import { Card, PageHeader, PageSkeleton, Stepper, Toggle } from "@/components/ui/extra";
+import { toast } from "@/components/ui/toast";
+import { Label, Text } from "@/components/ui/text";
 
-const num = (s: string, fallback: number) => {
-  const n = parseInt(s, 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-};
+if (Platform.OS === "android") UIManager.setLayoutAnimationEnabledExperimental?.(true);
+const animate = () => LayoutAnimation.configureNext(LayoutAnimation.create(220, "easeInEaseOut", "opacity"));
+
+interface Draft {
+  name: string;
+  description: string;
+  exercises: TemplateExercise[];
+}
+const EMPTY: Draft = { name: "", description: "", exercises: [] };
+const draftKey = (id: string) => `forma.builder.${id}`;
 
 export default function WorkoutBuilder() {
   useTheme();
   const router = useRouter();
-  const { id } = useLocalSearchParams<{ id?: string }>();
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [exercises, setExercises] = useState<TemplateExercise[]>([]);
+  const { id, from } = useLocalSearchParams<{ id?: string; from?: string }>();
+  const draftId = id ?? (from ? `from-${from}` : "new");
+  const [draft, setDraft] = useState<Draft>(EMPTY);
+  const [original, setOriginal] = useState<Draft>(EMPTY);
+  const [loaded, setLoaded] = useState(false);
+  const [restored, setRestored] = useState(false);
+  const [expanded, setExpanded] = useState<number | null>(null);
   const [picking, setPicking] = useState(false);
-  const [saving, setSaving] = useState<"save" | "start" | null>(null);
+  const [saving, setSaving] = useState<"save" | "start" | "dup" | null>(null);
+  const skipAutosave = useRef(false);
 
+  // load: saved draft → existing template → preset → blank
   useEffect(() => {
-    if (!id) return;
-    api.workouts.get(id).then((w) => {
-      setName(w.name);
-      setDescription(w.notes ?? "");
-      setExercises(workoutToExercises(w));
-    }).catch(() => {});
-  }, [id]);
-
-  const patch = (i: number, p: Partial<TemplateExercise>) => setExercises((l) => l.map((e, k) => (k === i ? { ...e, ...p } : e)));
-  const move = (i: number, d: -1 | 1) =>
-    setExercises((l) => {
-      const j = i + d;
-      if (j < 0 || j >= l.length) return l;
-      const c = [...l];
-      [c[i], c[j]] = [c[j], c[i]];
-      return c;
-    });
-  const toggleSuperset = (i: number) =>
-    setExercises((l) => {
-      const c = [...l];
-      const prev = c[i - 1];
-      if (i === 0) return l;
-      if (c[i].supersetGroup != null) c[i] = { ...c[i], supersetGroup: undefined };
-      else {
-        const g = prev.supersetGroup ?? Math.max(0, ...c.map((e) => e.supersetGroup ?? 0)) + 1;
-        c[i - 1] = { ...prev, supersetGroup: g };
-        c[i] = { ...c[i], supersetGroup: g };
+    let alive = true;
+    (async () => {
+      let base: Draft = EMPTY;
+      try {
+        if (id) {
+          const w = await api.workouts.get(id);
+          base = { name: w.name, description: w.notes ?? "", exercises: workoutToExercises(w) };
+        } else if (from) {
+          const p = templateById(from);
+          if (p) base = { name: `${p.name} (my copy)`, description: p.description, exercises: p.exercises.map((e) => ({ ...e })) };
+        }
+      } catch (e) {
+        toast.error(errorMessage(e as Error));
       }
-      return c;
+      const saved = await readRaw<Draft>(draftKey(draftId));
+      if (!alive) return;
+      setOriginal(base);
+      if (saved && (saved.exercises?.length || saved.name?.trim()) && JSON.stringify(saved) !== JSON.stringify(base)) {
+        setDraft(saved);
+        setRestored(true);
+      } else setDraft(base);
+      setLoaded(true);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [id, from, draftId]);
+
+  // autosave
+  useEffect(() => {
+    if (!loaded || skipAutosave.current) return;
+    const t = setTimeout(() => writeJSON(draftKey(draftId), draft), 400);
+    return () => clearTimeout(t);
+  }, [draft, draftId, loaded]);
+
+  const dirty = loaded && JSON.stringify(draft) !== JSON.stringify(original);
+  const duration = templateDurationMin(draft.exercises);
+  const canSave = draft.name.trim().length > 0 && draft.exercises.length > 0;
+
+  const patchEx = (i: number, p: Partial<TemplateExercise>) => setDraft((d) => ({ ...d, exercises: d.exercises.map((e, k) => (k === i ? { ...e, ...p } : e)) }));
+  const move = (i: number, dir: -1 | 1) => {
+    animate();
+    setDraft((d) => {
+      const j = i + dir;
+      if (j < 0 || j >= d.exercises.length) return d;
+      const next = [...d.exercises];
+      [next[i], next[j]] = [next[j], next[i]];
+      return { ...d, exercises: normalizeSupersets(next) };
     });
+    setExpanded((e) => (e === i ? i + dir : e));
+    Haptics.selectionAsync().catch(() => {});
+  };
+  const remove = (i: number) => {
+    animate();
+    const removed = draft.exercises[i];
+    setDraft((d) => ({ ...d, exercises: normalizeSupersets(d.exercises.filter((_, k) => k !== i)) }));
+    setExpanded(null);
+    toast.info(`${removed.name} removed`, { label: "Undo", onPress: () => setDraft((d) => ({ ...d, exercises: normalizeSupersets([...d.exercises.slice(0, i), removed, ...d.exercises.slice(i)]) })) });
+  };
+  const duplicate = (i: number) => {
+    animate();
+    setDraft((d) => ({ ...d, exercises: normalizeSupersets([...d.exercises.slice(0, i + 1), { ...d.exercises[i], supersetGroup: undefined }, ...d.exercises.slice(i + 1)]) }));
+  };
+  const linked = (i: number) => i > 0 && draft.exercises[i].supersetGroup != null && draft.exercises[i].supersetGroup === draft.exercises[i - 1].supersetGroup;
+  const toggleLink = (i: number) => {
+    animate();
+    Haptics.selectionAsync().catch(() => {});
+    setDraft((d) => {
+      const exs = d.exercises.map((e) => ({ ...e }));
+      if (linked(i)) {
+        // unlink: split the group at this boundary; singletons drop out in normalize
+        const g = exs[i].supersetGroup;
+        for (let k = i; k < exs.length && exs[k].supersetGroup === g; k++) exs[k].supersetGroup = 10_000 + i;
+      } else {
+        const g = exs[i - 1].supersetGroup ?? -1 - i;
+        exs[i - 1].supersetGroup = g;
+        exs[i].supersetGroup = g;
+      }
+      return { ...d, exercises: normalizeSupersets(exs) };
+    });
+  };
 
-  const input = { height: 40, minWidth: 52, borderRadius: 10, backgroundColor: colors.surfaceRecessed, color: colors.textPrimary, textAlign: "center" as const, fontFamily: fonts.num, fontSize: 15, paddingHorizontal: 8 };
-  const valid = name.trim().length > 0 && exercises.length > 0;
+  const finishSave = () => {
+    skipAutosave.current = true;
+    removeKey(draftKey(draftId));
+    invalidateResource("workout-templates");
+    invalidateResource("planned-workouts");
+  };
 
-  async function save(start: boolean) {
-    setSaving(start ? "start" : "save");
+  async function save(mode: "save" | "start" | "dup") {
+    setSaving(mode);
     try {
-      const draft = { name: name.trim(), description: description.trim() || undefined, exercises };
-      const row = id ? await updateTemplate(id, draft) : await createTemplate(draft);
-      invalidateResource();
-      if (start) {
+      const input = { name: mode === "dup" ? `${draft.name.trim()} copy` : draft.name.trim(), description: draft.description.trim() || undefined, exercises: draft.exercises };
+      const row = mode === "dup" || !id ? await createTemplate(input) : await updateTemplate(id, input);
+      finishSave();
+      if (mode === "start") {
         await startFromRow(row);
+        invalidateResource("active-session");
         router.replace("/workout/active");
-      } else router.back();
+      } else {
+        toast.success(mode === "dup" ? "Duplicated to your templates" : id ? "Changes saved" : "Template saved");
+        if (router.canGoBack()) router.back();
+    else router.replace("/workouts");
+      }
     } catch (e) {
-      Alert.alert("Couldn't save", e instanceof Error ? e.message : "Try again.");
+      toast.error(errorMessage(e as Error));
     } finally {
       setSaving(null);
     }
   }
 
+  const discard = () =>
+    Alert.alert(dirty ? "Discard changes?" : "Leave the builder?", dirty ? "Your edits to this workout will be lost." : undefined, [
+      { text: "Keep editing", style: "cancel" },
+      {
+        text: dirty ? "Discard" : "Leave",
+        style: "destructive",
+        onPress: () => {
+          finishSave();
+          if (router.canGoBack()) router.back();
+    else router.replace("/workouts");
+        },
+      },
+    ]);
+
+  if (!loaded) return <Screen><PageHeader title={id ? "Edit workout" : "Create workout"} /><PageSkeleton /></Screen>;
+
   return (
     <Screen>
-      <PageHeader title={id ? "Edit workout" : "Create workout"} />
-      <View style={{ gap: 12, marginBottom: 14 }}>
-        <Field label="name" value={name} onChangeText={setName} placeholder="Upper body A" />
-        <Field label="notes" value={description} onChangeText={setDescription} placeholder="Optional" />
+      <PageHeader title={id ? "Edit workout" : from ? "Customize workout" : "Create workout"} subtitle={from && !id ? "Changes save as your own template — the preset stays as it is." : undefined} />
+
+      {restored ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10, padding: 12, marginBottom: 12, borderRadius: radius.small, backgroundColor: "rgba(131,233,244,0.10)" }}>
+          <Ionicons name="time-outline" size={16} color={colors.cyan} />
+          <Text variant="meta" color="secondary" style={{ flex: 1 }}>Restored your unsaved changes.</Text>
+          <Pressable onPress={() => { animate(); setDraft(original); setRestored(false); removeKey(draftKey(draftId)); }} hitSlop={8}><Text variant="meta" color="pink">Start over</Text></Pressable>
+        </View>
+      ) : null}
+
+      <View style={{ gap: 12, marginBottom: 12 }}>
+        <Field label="name" value={draft.name} onChangeText={(name) => setDraft((d) => ({ ...d, name }))} placeholder="Upper body A" returnKeyType="next" maxLength={60} />
+        <Field label="description · optional" value={draft.description} onChangeText={(description) => setDraft((d) => ({ ...d, description }))} placeholder="What this session is for" maxLength={200} />
       </View>
-      <Text variant="meta" color="tertiary" style={{ marginBottom: 8 }}>{exercises.length} exercises · ~{templateDurationMin(exercises)} min</Text>
+      <Text variant="meta" color="tertiary" style={{ marginBottom: 10 }}>{draft.exercises.length} exercises · ~{duration} min{dirty ? " · unsaved" : ""}</Text>
 
-      {exercises.map((e, i) => (
-        <Card key={`${e.name}-${i}`} style={{ marginBottom: 10 }}>
-          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-            <View style={{ flex: 1 }}>
-              <Text variant="heading" style={{ fontSize: 17 }}>{e.name}</Text>
-              {e.supersetGroup != null ? <Label>SUPERSET {String.fromCharCode(64 + e.supersetGroup)}</Label> : null}
-              <Text variant="meta" color="tertiary">{templateExerciseTarget(e)} · rest {e.restSec}s</Text>
-            </View>
-            <View style={{ flexDirection: "row", gap: 14 }}>
-              <Pressable onPress={() => move(i, -1)} hitSlop={8}><Ionicons name="arrow-up" size={18} color={colors.textSecondary} /></Pressable>
-              <Pressable onPress={() => move(i, 1)} hitSlop={8}><Ionicons name="arrow-down" size={18} color={colors.textSecondary} /></Pressable>
-              <Pressable onPress={() => setExercises((l) => l.filter((_, k) => k !== i))} hitSlop={8}><Ionicons name="close" size={18} color={colors.textSecondary} /></Pressable>
-            </View>
-          </View>
-          <View style={{ flexDirection: "row", gap: 10, marginTop: 12, alignItems: "flex-end" }}>
-            <View style={{ gap: 4 }}><Label>SETS</Label><TextInput style={input} keyboardType="number-pad" value={String(e.sets)} onChangeText={(t) => patch(i, { sets: num(t, 1) })} /></View>
-            <View style={{ gap: 4 }}><Label>MIN</Label><TextInput style={input} keyboardType="number-pad" value={String(e.repsMin)} onChangeText={(t) => patch(i, { repsMin: num(t, 1) })} /></View>
-            <View style={{ gap: 4 }}><Label>MAX</Label><TextInput style={input} keyboardType="number-pad" value={String(e.repsMax)} onChangeText={(t) => patch(i, { repsMax: num(t, e.repsMin) })} /></View>
-            <View style={{ gap: 4 }}><Label>REST (S)</Label><TextInput style={input} keyboardType="number-pad" value={String(e.restSec)} onChangeText={(t) => patch(i, { restSec: num(t, 60) })} /></View>
-          </View>
-          {i > 0 ? <View style={{ flexDirection: "row", marginTop: 10 }}><Chip label={e.supersetGroup != null ? "Remove superset" : "Superset with previous"} active={e.supersetGroup != null} onPress={() => toggleSuperset(i)} /></View> : null}
-        </Card>
-      ))}
+      {draft.exercises.length === 0 ? (
+        <Pressable onPress={() => setPicking(true)} style={{ padding: 28, borderRadius: radius.large, borderWidth: 1, borderStyle: "dashed", borderColor: colors.lineHighlight, alignItems: "center", gap: 8, marginBottom: 12 }}>
+          <Ionicons name="add-circle-outline" size={28} color={colors.textSecondary} />
+          <Text>Add your first exercise</Text>
+          <Text variant="meta" color="tertiary">Search the library by name or muscle.</Text>
+        </Pressable>
+      ) : null}
 
-      <View style={{ gap: 10, marginTop: 4 }}>
-        <Button label="Add exercise" variant="ghost" onPress={() => setPicking(true)} />
-        <Button label="Save" disabled={!valid} loading={saving === "save"} onPress={() => save(false)} />
-        <Button label="Save & start" variant="accent" disabled={!valid} loading={saving === "start"} onPress={() => save(true)} />
+      {draft.exercises.map((e, i) => {
+        const head = e.supersetGroup != null && !linked(i);
+        const open = expanded === i;
+        return (
+          <View key={`${e.name}-${i}`}>
+            {i > 0 ? (
+              <Pressable onPress={() => toggleLink(i)} accessibilityRole="button" style={{ alignSelf: "center", flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 6, paddingHorizontal: 12 }}>
+                <Ionicons name={linked(i) ? "link" : "unlink-outline"} size={13} color={linked(i) ? colors.mauve : colors.textTertiary} />
+                <Text variant="meta" style={{ color: linked(i) ? colors.pinkSoft : colors.textTertiary }}>{linked(i) ? "Superset — tap to unlink" : "Link into superset"}</Text>
+              </Pressable>
+            ) : null}
+            {head ? <Label style={{ color: colors.mauve, marginBottom: 4, marginLeft: 4 }}>SUPERSET {supersetLetter(e.supersetGroup!)}</Label> : null}
+            <Card style={{ marginBottom: 0, padding: 14, borderLeftWidth: e.supersetGroup != null ? 3 : 1, borderLeftColor: e.supersetGroup != null ? colors.mauve : undefined }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <View style={{ gap: 2 }}>
+                  <Pressable onPress={() => move(i, -1)} disabled={i === 0} hitSlop={6} accessibilityLabel="Move up"><Ionicons name="chevron-up" size={18} color={i === 0 ? colors.lineHighlight : colors.textSecondary} /></Pressable>
+                  <Pressable onPress={() => move(i, 1)} disabled={i === draft.exercises.length - 1} hitSlop={6} accessibilityLabel="Move down"><Ionicons name="chevron-down" size={18} color={i === draft.exercises.length - 1 ? colors.lineHighlight : colors.textSecondary} /></Pressable>
+                </View>
+                <ExerciseThumb name={e.name} size={38} />
+                <Pressable style={{ flex: 1 }} onPress={() => { animate(); setExpanded(open ? null : i); }} accessibilityHint="Edit sets, reps and rest">
+                  <Text numberOfLines={1} style={{ fontSize: 16 }}>{e.name}</Text>
+                  <Text variant="meta" color="tertiary">{e.sets} × {e.repsMin === e.repsMax ? e.repsMin : `${e.repsMin}–${e.repsMax}`} · {e.restSec}s rest{e.rpe != null ? ` · RPE ${e.rpe}` : ""}{e.warmup ? " · warm-up" : ""}</Text>
+                </Pressable>
+                <Pressable onPress={() => duplicate(i)} hitSlop={8} accessibilityLabel="Duplicate exercise"><Ionicons name="copy-outline" size={18} color={colors.textSecondary} /></Pressable>
+                <Pressable onPress={() => remove(i)} hitSlop={8} accessibilityLabel="Remove exercise"><Ionicons name="trash-outline" size={18} color={colors.textSecondary} /></Pressable>
+              </View>
+              {open ? (
+                <View style={{ gap: 12, marginTop: 14 }}>
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <Stepper compact label="sets" value={e.sets} step={1} min={1} max={20} onChange={(v) => patchEx(i, { sets: Math.max(1, Math.round(v ?? 1)) })} />
+                    <Stepper compact label="rest" suffix="s" value={e.restSec} step={15} max={600} onChange={(v) => patchEx(i, { restSec: Math.round(v ?? 0) })} />
+                  </View>
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <Stepper compact label="reps min" value={e.repsMin} step={1} min={1} max={100} onChange={(v) => patchEx(i, { repsMin: Math.round(v ?? 1), repsMax: Math.max(e.repsMax, Math.round(v ?? 1)) })} />
+                    <Stepper compact label="reps max" value={e.repsMax} step={1} min={1} max={100} onChange={(v) => patchEx(i, { repsMax: Math.max(e.repsMin, Math.round(v ?? e.repsMin)) })} />
+                  </View>
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <Stepper compact label="rpe target" value={e.rpe ?? null} step={0.5} min={5} max={10} onChange={(v) => patchEx(i, { rpe: v ?? undefined })} />
+                    <View style={{ flex: 1, justifyContent: "flex-end", gap: 6 }}>
+                      <Label style={{ textAlign: "center" }}>WARM-UP SET</Label>
+                      <View style={{ height: 40, alignItems: "center", justifyContent: "center" }}><Toggle value={!!e.warmup} onChange={(v) => patchEx(i, { warmup: v || undefined })} /></View>
+                    </View>
+                  </View>
+                  <TextInput value={e.note ?? ""} onChangeText={(t) => patchEx(i, { note: t || undefined })} placeholder="Note or cue · optional" placeholderTextColor={colors.textTertiary} maxLength={120} style={{ height: 44, borderRadius: radius.small, backgroundColor: colors.surfaceRecessed, paddingHorizontal: 14, color: colors.textPrimary, fontFamily: fonts.regular, fontSize: 15 }} />
+                </View>
+              ) : null}
+            </Card>
+          </View>
+        );
+      })}
+
+      <View style={{ gap: 10, marginTop: 14 }}>
+        <Button label="Add exercise" variant="ghost" icon={<Ionicons name="add" size={18} color={colors.onColor} />} onPress={() => setPicking(true)} />
+        <Button label={id ? "Save changes" : "Save template"} disabled={!canSave} loading={saving === "save"} onPress={() => save("save")} />
+        <Button label="Save & start" variant="accent" disabled={!canSave} loading={saving === "start"} onPress={() => save("start")} />
+        {!canSave && draft.exercises.length ? <Text variant="meta" color="tertiary" style={{ textAlign: "center" }}>Give it a name to save.</Text> : null}
+        <View style={{ flexDirection: "row", justifyContent: "center", gap: 28, marginTop: 4 }}>
+          {id ? <Pressable onPress={() => save("dup")} disabled={!canSave || !!saving} hitSlop={8}><Text color="secondary">{saving === "dup" ? "Duplicating…" : "Duplicate"}</Text></Pressable> : null}
+          <Pressable onPress={discard} hitSlop={8}><Text color="tertiary">Discard</Text></Pressable>
+        </View>
       </View>
 
       <ExercisePicker
         visible={picking}
         onClose={() => setPicking(false)}
         onPick={(ex) => {
-          setExercises((l) => [...l, { name: ex.name, sets: 3, repsMin: 8, repsMax: 12, restSec: 90 }]);
+          animate();
+          setDraft((d) => ({ ...d, exercises: [...d.exercises, { name: ex.name, exerciseId: ex.id, sets: 3, repsMin: 8, repsMax: 12, restSec: 90 }] }));
+          setExpanded(draft.exercises.length);
           setPicking(false);
+          Haptics.selectionAsync().catch(() => {});
         }}
       />
     </Screen>

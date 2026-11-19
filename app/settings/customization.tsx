@@ -9,14 +9,9 @@ import { colors, radius } from "@/theme/tokens";
 import { Screen } from "@/components/ui/screen";
 import { Card, PageHeader } from "@/components/ui/extra";
 import { Text } from "@/components/ui/text";
+import { swatchColors } from "@/lib/swatch";
 
 /** Pull the colour stops out of a CSS gradient string ("linear-gradient(140deg,#2A1120,#7A174F 60%,#D51A7A)"). */
-export function swatchColors(sw?: string): [string, string, ...string[]] {
-  const hex = sw?.match(/#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)/g) ?? [];
-  if (hex.length >= 2) return hex as [string, string, ...string[]];
-  const one = hex[0] ?? "rgba(255,255,255,0.08)";
-  return [one, one];
-}
 
 const OTHER_SLOTS: { slot: CustomizationSlot; title: string; desc: string }[] = [
   { slot: "effect", title: "Ambient effect", desc: "The motion layer behind the interface. Some themes ship their own." },

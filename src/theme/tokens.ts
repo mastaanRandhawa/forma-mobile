@@ -13,7 +13,8 @@ export type ColorKey =
   | "pink" | "purple" | "mauve" | "blue" | "cyan" | "orange" | "coral" | "amber" | "lime" | "jade"
   | "btnWhite" | "btnWhiteInk" | "onColor"
   | "good" | "steady" | "caution" | "rest"
-  | "lineSoft" | "lineHighlight" | "specular" | "danger";
+  | "lineSoft" | "lineHighlight" | "specular" | "danger"
+  | "onAccent" | "hairline" | "highlight" | "shade" | "shadowTint";
 
 export const colors: Record<ColorKey, string> = {
   // atmosphere / ground
@@ -71,6 +72,22 @@ export const colors: Record<ColorKey, string> = {
   specular: "rgba(255, 255, 255, 0.34)",
 
   danger: "#FF6B4A",
+
+  // derived: readable ink on an accent fill, surface hairline, top highlight,
+  // recessed shade and the contact-shadow tint (all switch with light/dark)
+  onAccent: "#FFFFFF",
+  hairline: "rgba(255, 255, 255, 0.06)",
+  highlight: "rgba(255, 255, 255, 0.16)",
+  shade: "rgba(30, 6, 24, 0.5)",
+  shadowTint: "#400F30",
+};
+
+/** Live ambient state the Atmosphere paints from (set by the theme engine). */
+export const ambient: { mode: "dark" | "light"; atmosphere: string; aurora: [string, string, string]; fill: string } = {
+  mode: "dark",
+  atmosphere: "",
+  aurora: ["rgba(213,26,122,0.28)", "rgba(122,23,79,0.34)", "rgba(179,101,150,0.18)"],
+  fill: "linear-gradient(150deg,#FF7E58 0%,#E64A2B 100%)",
 };
 
 export type Tone = "pink" | "cyan" | "lime" | "amber" | "mauve" | "violet";
@@ -118,37 +135,32 @@ export const type = {
   numeral: { fontFamily: fonts.num, fontSize: 28, lineHeight: 28, letterSpacing: -0.6 },
 } satisfies Record<string, TextStyle>;
 
-/** Soft, wine-tinted contact shadows — never hard black. */
+/**
+ * Contact shadows. Dark mode: soft wine-tinted depth. Light mode: neutral,
+ * compact shadows — depth, not glow — as in the website's light-mode layer.
+ * Getters so every read reflects the current mode.
+ */
+const light = () => ambient.mode === "light";
 export const shadow = {
-  soft: {
-    shadowColor: "#400F30",
-    shadowOffset: { width: 0, height: 14 },
-    shadowOpacity: 0.28,
-    shadowRadius: 28,
-    elevation: 8,
+  get soft(): ViewStyle {
+    return light()
+      ? { shadowColor: "#1E1423", shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.08, shadowRadius: 16, elevation: 3 }
+      : { shadowColor: colors.shadowTint, shadowOffset: { width: 0, height: 14 }, shadowOpacity: 0.28, shadowRadius: 28, elevation: 8 };
   },
-  raised: {
-    shadowColor: "#3C122E",
-    shadowOffset: { width: 8, height: 14 },
-    shadowOpacity: 0.34,
-    shadowRadius: 26,
-    elevation: 12,
+  get raised(): ViewStyle {
+    return light()
+      ? { shadowColor: "#1E1423", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.1, shadowRadius: 20, elevation: 4 }
+      : { shadowColor: colors.shadowTint, shadowOffset: { width: 6, height: 12 }, shadowOpacity: 0.34, shadowRadius: 24, elevation: 12 };
   },
-  float: {
-    shadowColor: "#1C0616",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.45,
-    shadowRadius: 14,
-    elevation: 14,
+  get float(): ViewStyle {
+    return light()
+      ? { shadowColor: "#1E1423", shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.14, shadowRadius: 24, elevation: 8 }
+      : { shadowColor: "#1C0616", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.45, shadowRadius: 14, elevation: 14 };
   },
-  glowHero: {
-    shadowColor: colors.pink,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.55,
-    shadowRadius: 40,
-    elevation: 0,
+  get glowHero(): ViewStyle {
+    return { shadowColor: colors.pink, shadowOffset: { width: 0, height: 0 }, shadowOpacity: light() ? 0.18 : 0.55, shadowRadius: 40, elevation: 0 };
   },
-} satisfies Record<string, ViewStyle>;
+};
 
 const VAR_TO_KEY: Record<string, ColorKey> = {
   "--background": "background",
@@ -182,16 +194,27 @@ const VAR_TO_KEY: Record<string, ColorKey> = {
 };
 
 /** Apply a theme's CSS-var set (from themes.ts) onto the live token objects. */
-export function applyThemeVars(vars: Record<string, string>) {
+export function applyThemeVars(vars: Record<string, string>, mode?: "dark" | "light") {
   for (const [k, v] of Object.entries(vars)) {
     const key = VAR_TO_KEY[k];
     if (key) colors[key] = v;
   }
   if (vars["--accent-pink"]) colors.pinkHot = vars["--accent-pink"];
-  if (vars["--accent-pink"]) colors.danger = vars["--accent-coral"] ?? colors.danger;
+  if (vars["--accent-coral"]) colors.danger = vars["--accent-coral"];
   if (vars["--radius-small"]) radius.small = parseInt(vars["--radius-small"], 10);
   if (vars["--radius-medium"]) radius.medium = parseInt(vars["--radius-medium"], 10);
   if (vars["--radius-large"]) radius.large = parseInt(vars["--radius-large"], 10);
   if (vars["--radius-xl"]) radius.xl = parseInt(vars["--radius-xl"], 10);
   if (vars["--radius-shell"]) radius.shell = parseInt(vars["--radius-shell"], 10);
+  if (vars["--atmosphere-bg"]) ambient.atmosphere = vars["--atmosphere-bg"];
+  if (vars["--aurora-1"]) ambient.aurora = [vars["--aurora-1"], vars["--aurora-2"] ?? vars["--aurora-1"], vars["--aurora-3"] ?? vars["--aurora-1"]];
+  if (vars["--fill-coral"]) ambient.fill = vars["--fill-coral"];
+  if (mode) {
+    ambient.mode = mode;
+    const dark = mode === "dark";
+    colors.hairline = dark ? "rgba(255, 255, 255, 0.06)" : colors.lineSoft;
+    colors.highlight = dark ? "rgba(255, 255, 255, 0.16)" : "rgba(255, 255, 255, 0.8)";
+    colors.shade = dark ? "rgba(30, 6, 24, 0.5)" : "rgba(41, 28, 45, 0.1)";
+    colors.shadowTint = dark ? colors.wine : "#1E1423";
+  }
 }

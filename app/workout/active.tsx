@@ -1,408 +1,1031 @@
+/**
+ * Active workout — the focused, one-set-at-a-time logger (website:
+ * pages/ActiveWorkout.tsx), adapted for one-handed use on a phone.
+ *
+ * The server session owns completed sets; src/lib/active-session.ts owns the
+ * flow (focus cursor, skips, deferrals, planned set slots, pause + rest timer)
+ * and persists it per session so nothing is lost on navigation or app kill.
+ */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Pressable, TextInput, Vibration, View } from "react-native";
+import { Animated, AppState, Easing, Image, Pressable, ScrollView, Vibration, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Svg, { Circle } from "react-native-svg";
 import { api } from "@/api/client";
-import { invalidateResource } from "@/api/hooks";
+import { errorMessage, invalidateResource } from "@/api/hooks";
 import { useAuth } from "@/auth/auth-provider";
-import type { Exercise, ExercisePerformance, ExerciseSet, SwapSuggestion, WorkoutSession } from "@/api/types";
-import { fmtClock, fmtDuration, fromKg, saveSessionAsTemplate, toKg, unitLabel, type Units } from "@/lib/workouts";
+import type { Exercise, ExercisePerformance, ExerciseHistory, SwapSuggestion, WorkoutSession } from "@/api/types";
+import {
+  activeRow,
+  clearActiveUI,
+  elapsedSec,
+  epley1RM,
+  exerciseComplete,
+  getActiveUI,
+  loadActiveUI,
+  nextFocus,
+  phaseOf,
+  progressOf,
+  setKey,
+  setRows,
+  sortedPerfs,
+  supersetLetter,
+  supersetPeers,
+  updateActiveUI,
+  useActiveUI,
+  workingRows,
+  type ActiveUI,
+  type SetRow,
+} from "@/lib/active-session";
+import { trainerCue, type CueContext, type CueEvent } from "@/lib/cues";
 import { plateCombo, plateLabel } from "@/lib/plates";
-import { useTheme } from "@/theme/theme-provider";
-import { colors, fonts, radius } from "@/theme/tokens";
-import { Screen } from "@/components/ui/screen";
-import { Card, EmptyState, PageSkeleton, Sheet } from "@/components/ui/extra";
-import { Button, Chip, ProgressBar } from "@/components/ui/controls";
+import { cancelRestAlert, scheduleRestAlert } from "@/lib/reminders";
+import { grantWorkoutRewards } from "@/lib/rewards";
+import { fmtClock, fmtDuration, fromKg, repRange, saveSessionAsTemplate, startRepeat, toKg, unitLabel, type Units } from "@/lib/workouts";
+import { useEquippedItem, useTheme } from "@/theme/theme-provider";
+import { colors, fonts, radius, shadow } from "@/theme/tokens";
+import { repdbEntryFor, repdbImage } from "@/lib/repdb";
+import { ExerciseDetailSheet, ExercisePicker, ExerciseThumb } from "@/components/exercise";
+import { Atmosphere, Screen } from "@/components/ui/screen";
+import { Button, Chip } from "@/components/ui/controls";
+import { EmptyState, PageSkeleton, Sheet, Stepper } from "@/components/ui/extra";
+import { KaiOrb } from "@/components/ui/kai-orb";
+import { toast } from "@/components/ui/toast";
 import { Label, Num, Text } from "@/components/ui/text";
 
 const COMPOUND_REST = 120;
 const ISOLATION_REST = 75;
+const DEFAULT_REST = 90;
 const adaptiveRest = (mechanic: string | null | undefined, lastRpe: number | null | undefined) =>
-  ((lastRpe ?? 0) >= 9 ? 30 : 0) + (mechanic === "compound" ? COMPOUND_REST : ISOLATION_REST);
+  ((lastRpe ?? 0) >= 9 ? 30 : 0) + (mechanic === "compound" ? COMPOUND_REST : mechanic === "isolation" ? ISOLATION_REST : DEFAULT_REST);
 
-type SetDraft = { weight: string; reps: string; rpe: string };
+type Summary = {
+  session: WorkoutSession;
+  durationSec: number;
+  volumeKg: number;
+  sets: number;
+  prs: string[];
+  coins: number;
+  muscles: string[];
+  skipped: number;
+  vsLast: { volumeKg: number; durationSec: number } | null;
+  protein: { eaten: number; target: number } | null;
+};
 
 export default function ActiveWorkout() {
   useTheme();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const look = useEquippedItem("avatar")?.id;
   const units: Units = user?.unitPreference ?? "imperial";
   const u = unitLabel(units);
+  const step = units === "metric" ? 2.5 : 5;
 
   const [session, setSession] = useState<WorkoutSession | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const ui = useActiveUI(session?.id);
   const [now, setNow] = useState(Date.now());
-  const [paused, setPaused] = useState<{ at: number; total: number } | null>(null);
-  const [restEnds, setRestEnds] = useState<number | null>(null);
-  const [restTotal, setRestTotal] = useState(90);
-  const [drafts, setDrafts] = useState<Record<string, SetDraft>>({});
-  const [adding, setAdding] = useState(false);
+  const [history, setHistory] = useState<Record<string, ExerciseHistory | null>>({});
+  const [cue, setCue] = useState<{ event: CueEvent; ctx: CueContext }>({ event: "start", ctx: {} });
+  const [milestone, setMilestone] = useState<{ kind: "pr" | "exercise"; title: string; detail?: string } | null>(null);
+  const [sheet, setSheet] = useState<null | "overview" | "end" | "add" | "swap" | "howto" | "swapLibrary">(null);
   const [swapFor, setSwapFor] = useState<ExercisePerformance | null>(null);
-  const [plateFor, setPlateFor] = useState<number | null>(null);
-  const [summary, setSummary] = useState<WorkoutSession | null>(null);
-  const [finishing, setFinishing] = useState(false);
-  const pausedMs = useRef(0);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [summary, setSummary] = useState<Summary | null>(null);
+  const [savedTpl, setSavedTpl] = useState(false);
+  const priorRef = useRef<WorkoutSession[]>([]);
 
-  // ── load the in-progress session ─────────────────────────────────────────
-  useEffect(() => {
-    api.sessions
-      .list({ status: "in_progress", take: 1 })
-      .then((l) => (l[0] ? api.sessions.get(l[0].id) : null))
-      .then(setSession)
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+  const id = session?.id ?? null;
+  const patchUI = useCallback((fn: (u: ActiveUI) => ActiveUI) => id && updateActiveUI(id, fn), [id]);
 
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 500);
-    return () => clearInterval(t);
-  }, []);
-
-  const elapsed = session ? Math.max(0, Math.floor(((paused ? paused.at : now) - Date.parse(session.startedAt) - pausedMs.current) / 1000)) : 0;
-  const restLeft = restEnds ? Math.max(0, Math.ceil((restEnds - now) / 1000)) : 0;
-
-  useEffect(() => {
-    if (restEnds && restLeft <= 0) {
-      setRestEnds(null);
-      Vibration.vibrate([0, 200, 100, 200]);
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+  // ── load the in-progress session + plan targets ──────────────────────────
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const list = await api.sessions.list({ status: "in_progress", take: 1 });
+      if (!list[0]) {
+        setSession(null);
+        return;
+      }
+      const s = await api.sessions.get(list[0].id);
+      const stored = await loadActiveUI(s.id);
+      // first open: derive planned set slots + targets from the workout plan
+      const missing = s.performances.filter((p) => stored.planned[p.id] == null);
+      if (missing.length) {
+        const plan = s.workoutId ? await api.workouts.get(s.workoutId).catch(() => null) : null;
+        updateActiveUI(s.id, (cur) => {
+          const planned = { ...cur.planned };
+          const targets = { ...cur.targets };
+          const drafts = { ...cur.drafts };
+          for (const p of missing) {
+            const we = plan?.exercises.find((e) => e.order === p.order && e.exerciseId === p.exerciseId) ?? plan?.exercises.find((e) => e.exerciseId === p.exerciseId);
+            const n = Math.max(1, we?.targetSets ?? 3, p.sets.length);
+            planned[p.id] = n;
+            targets[p.id] = we ? `${we.targetSets} × ${repRange(we.targetRepsMin, we.targetRepsMax)}` : "3 × 8–12";
+            const w = p.prescribedWeightKg ?? we?.targetWeightKg ?? null;
+            const r = p.prescribedReps ?? we?.targetRepsMax ?? null;
+            for (let k = 1; k <= n; k++) if (!p.sets.find((x) => x.setNumber === k)) drafts[setKey(p.id, k)] = { weightKg: w, reps: r, rpe: null };
+          }
+          return { ...cur, planned, targets, drafts };
+        });
+      }
+      const cur = getActiveUI(s.id);
+      if (!cur.cursor || !s.performances.some((p) => p.id === cur.cursor)) updateActiveUI(s.id, (c) => ({ ...c, cursor: nextFocus(s, c) }));
+      setSession(s);
+      api.sessions.list({ status: "completed", take: 40 }).then((h) => (priorRef.current = h)).catch(() => {});
+    } catch (e) {
+      setLoadError(errorMessage(e as Error));
+    } finally {
+      setLoading(false);
     }
-  }, [restEnds, restLeft]);
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // tick: 250ms while resting (smooth ring), 1s otherwise
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), ui.restEndsAt ? 250 : 1000);
+    return () => clearInterval(t);
+  }, [ui.restEndsAt]);
+
+  // returning from background → re-sync clock immediately
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (s) => s === "active" && setNow(Date.now()));
+    return () => sub.remove();
+  }, []);
+
+  const perfs = useMemo(() => (session ? sortedPerfs(session) : []), [session]);
+  const current = perfs.find((p) => p.id === ui.cursor) ?? null;
+  const restLeft = ui.restEndsAt ? Math.max(0, Math.ceil((ui.restEndsAt - now) / 1000)) : 0;
+
+  // rest finished
+  useEffect(() => {
+    if (ui.restEndsAt && restLeft <= 0) {
+      patchUI((c) => ({ ...c, restEndsAt: null }));
+      Vibration.vibrate([0, 180, 90, 180]);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      setCue({ event: "rest-over", ctx: {} });
+    }
+  }, [ui.restEndsAt, restLeft, patchUI]);
+
+  // milestone auto-hide
+  useEffect(() => {
+    if (!milestone) return;
+    const t = setTimeout(() => setMilestone(null), 3400);
+    return () => clearTimeout(t);
+  }, [milestone]);
+
+  // previous-performance lookup for the exercise in focus
+  useEffect(() => {
+    const slug = current?.exercise.slug;
+    if (!slug || slug in history) return;
+    setHistory((h) => ({ ...h, [slug]: null }));
+    api.library.exerciseHistory(slug, 3).then((r) => setHistory((h) => ({ ...h, [slug]: r }))).catch(() => {});
+  }, [current?.exercise.slug, history]);
+
+  // start cue once the session is known
+  useEffect(() => {
+    if (session && cue.event === "start" && cue.ctx.totalExercises === undefined) {
+      setCue({ event: "start", ctx: { totalExercises: session.performances.filter((p) => !ui.skipped.includes(p.id)).length, exerciseName: current?.exercise.name } });
+    }
+  }, [session, cue, ui.skipped, current]);
+
+  // ── mutations ────────────────────────────────────────────────────────────
+  const replacePerf = (perf: ExercisePerformance) => setSession((s) => (s ? { ...s, performances: s.performances.map((p) => (p.id === perf.id ? perf : p)) } : s));
+
+  const patchDraft = (perf: ExercisePerformance, row: SetRow, p: Partial<{ weightKg: number | null; reps: number | null; rpe: number | null; warmup: boolean }>) =>
+    patchUI((c) => ({ ...c, drafts: { ...c.drafts, [setKey(perf.id, row.n)]: { weightKg: row.weightKg, reps: row.reps, rpe: row.rpe, warmup: row.warmup, ...p } } }));
 
   const startRest = (sec: number) => {
-    setRestTotal(sec);
-    setRestEnds(Date.now() + sec * 1000);
+    patchUI((c) => ({ ...c, restEndsAt: Date.now() + sec * 1000, restTotal: sec }));
+    void scheduleRestAlert(sec);
+  };
+  const stopRest = () => {
+    patchUI((c) => ({ ...c, restEndsAt: null }));
+    cancelRestAlert();
+  };
+  const adjustRest = (delta: number) => {
+    const left = Math.max(1, restLeft + delta);
+    patchUI((c) => ({ ...c, restEndsAt: Date.now() + left * 1000, restTotal: Math.max(c.restTotal, left) }));
+    void scheduleRestAlert(left);
   };
 
   const togglePause = () => {
-    if (paused) {
-      pausedMs.current += Date.now() - paused.at;
-      setPaused(null);
-    } else setPaused({ at: Date.now(), total: 0 });
+    Haptics.selectionAsync().catch(() => {});
+    patchUI((c) =>
+      c.paused
+        ? { ...c, paused: false, pausedAt: null, pausedMs: c.pausedMs + (c.pausedAt ? Date.now() - c.pausedAt : 0) }
+        : { ...c, paused: true, pausedAt: Date.now(), restEndsAt: null },
+    );
+    cancelRestAlert();
   };
 
-  // ── set editing ──────────────────────────────────────────────────────────
-  const draftKey = (perfId: string, n: number) => `${perfId}:${n}`;
-  const setValue = (perf: ExercisePerformance, set: ExerciseSet | undefined, n: number): SetDraft => {
-    const d = drafts[draftKey(perf.id, n)];
-    if (d) return d;
-    const w = set?.weightKg ?? perf.prescribedWeightKg ?? null;
-    return {
-      weight: w != null ? String(fromKg(w, units)) : "",
-      reps: String(set?.reps ?? perf.prescribedReps ?? ""),
-      rpe: set?.rpe != null ? String(set.rpe) : "",
-    };
+  const focus = (perfId: string) => {
+    patchUI((c) => ({ ...c, cursor: perfId }));
+    setSheet(null);
   };
-  const patchDraft = (perfId: string, n: number, cur: SetDraft, p: Partial<SetDraft>) =>
-    setDrafts((d) => ({ ...d, [draftKey(perfId, n)]: { ...cur, ...p } }));
 
-  const replacePerf = (perf: ExercisePerformance) =>
-    setSession((s) => (s ? { ...s, performances: s.performances.map((p) => (p.id === perf.id ? perf : p)) } : s));
+  /** Write one set to the server. Completed sets only — planned slots stay on-device. */
+  const saveSet = async (perf: ExercisePerformance, row: SetRow, completed: boolean) => {
+    if (!session) return null;
+    if (!completed) {
+      // un-complete: the API can't clear completedAt, so drop the row and keep the values as a draft
+      await api.sessions.deleteSet(session.id, perf.id, row.n);
+      patchUI((c) => ({ ...c, drafts: { ...c.drafts, [setKey(perf.id, row.n)]: { weightKg: row.weightKg, reps: row.reps, rpe: row.rpe, warmup: row.warmup } } }));
+      const next = { ...perf, sets: perf.sets.filter((s) => s.setNumber !== row.n) };
+      replacePerf(next);
+      return next;
+    }
+    const saved = await api.sessions.logSet(session.id, perf.id, row.n, { weightKg: row.weightKg, reps: row.reps, rpe: row.rpe, isWarmup: row.warmup, completed: true });
+    const next = { ...perf, sets: [...perf.sets.filter((s) => s.setNumber !== row.n), saved].sort((a, b) => a.setNumber - b.setNumber) };
+    replacePerf(next);
+    return next;
+  };
 
-  const completeSet = async (perf: ExercisePerformance, n: number, done: boolean, warmup = false) => {
-    if (!session) return;
-    const existing = perf.sets.find((s) => s.setNumber === n);
-    const d = setValue(perf, existing, n);
-    const weight = parseFloat(d.weight);
-    const reps = parseInt(d.reps, 10);
-    const rpe = parseFloat(d.rpe);
+  const toggleRow = async (perf: ExercisePerformance, row: SetRow) => {
     try {
-      const saved = await api.sessions.logSet(session.id, perf.id, n, {
-        weightKg: Number.isFinite(weight) ? toKg(weight, units) : null,
-        reps: Number.isFinite(reps) ? reps : null,
-        rpe: Number.isFinite(rpe) ? rpe : null,
-        isWarmup: existing?.isWarmup ?? warmup,
-        completed: done,
-      });
-      const sets = [...perf.sets.filter((s) => s.setNumber !== n), saved].sort((a, b) => a.setNumber - b.setNumber);
-      replacePerf({ ...perf, sets });
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-      if (done && !saved.isWarmup) startRest(adaptiveRest(perf.exercise.mechanic as string | undefined, Number.isFinite(rpe) ? rpe : null));
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      await saveSet(perf, row, !row.done);
     } catch (e) {
-      Alert.alert("Couldn't save set", e instanceof Error ? e.message : "Try again.");
+      toast.error(errorMessage(e as Error));
     }
   };
 
-  const addSet = (perf: ExercisePerformance) => {
-    const n = Math.max(0, ...perf.sets.map((s) => s.setNumber)) + 1;
-    replacePerf({ ...perf, sets: [...perf.sets, { id: `tmp-${n}`, setNumber: n, weightKg: perf.sets.at(-1)?.weightKg ?? null, reps: perf.sets.at(-1)?.reps ?? null, rpe: null, restSecondsTaken: null, isWarmup: false, completedAt: null, formScore: null, romValue: null, isPersonalRecord: false }] });
-  };
-
-  const removeSet = async (perf: ExercisePerformance, n: number) => {
+  const deleteRow = async (perf: ExercisePerformance, row: SetRow) => {
     if (!session) return;
-    await api.sessions.deleteSet(session.id, perf.id, n).catch(() => {});
-    replacePerf({ ...perf, sets: perf.sets.filter((s) => s.setNumber !== n) });
+    const rows = setRows(perf, ui);
+    if (rows.length <= 1) return toast.info("An exercise needs at least one set. Skip it instead.");
+    if (rows.some((r) => r.n > row.n && r.saved)) return toast.info("Undo the later sets first, then delete this one.");
+    try {
+      if (row.saved) await api.sessions.deleteSet(session.id, perf.id, row.n);
+      replacePerf({ ...perf, sets: perf.sets.filter((s) => s.setNumber !== row.n) });
+      patchUI((c) => {
+        const drafts = { ...c.drafts };
+        for (let n = row.n; n < rows.length; n++) {
+          const nextD = drafts[setKey(perf.id, n + 1)];
+          if (nextD) drafts[setKey(perf.id, n)] = nextD;
+          else delete drafts[setKey(perf.id, n)];
+        }
+        delete drafts[setKey(perf.id, rows.length)];
+        return { ...c, drafts, planned: { ...c.planned, [perf.id]: rows.length - 1 } };
+      });
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    } catch (e) {
+      toast.error(errorMessage(e as Error));
+    }
   };
 
-  // ── add / swap exercise ──────────────────────────────────────────────────
+  const addSet = (perf: ExercisePerformance, warmup: boolean) => {
+    const rows = setRows(perf, ui);
+    const last = [...rows].reverse().find((r) => !r.warmup) ?? rows[rows.length - 1];
+    const n = rows.length + 1;
+    const w = last?.weightKg ?? null;
+    patchUI((c) => ({
+      ...c,
+      planned: { ...c.planned, [perf.id]: n },
+      drafts: { ...c.drafts, [setKey(perf.id, n)]: { weightKg: warmup && w != null ? Math.round(w * 0.5 * 2) / 2 : w, reps: warmup ? 10 : last?.reps ?? null, rpe: null, warmup } },
+    }));
+    Haptics.selectionAsync().catch(() => {});
+  };
+
+  const findPR = (perf: ExercisePerformance): string | null => {
+    const h = history[perf.exercise.slug];
+    const done = perf.sets.filter((s) => s.completedAt && !s.isWarmup && s.weightKg != null && s.reps != null);
+    if (!done.length) return null;
+    const bestW = Math.max(...done.map((s) => s.weightKg!));
+    const bestE = Math.max(...done.map((s) => epley1RM(s.weightKg!, s.reps!)));
+    const prev = h?.personalRecords ?? [];
+    const prevW = prev.find((r) => r.recordType === "max_weight")?.value ?? 0;
+    const prevE = prev.find((r) => r.recordType === "max_1rm_estimate")?.value ?? 0;
+    if (!h || (!h.history.length && !prev.length)) return null; // first time isn't a "record"
+    if (bestW > prevW && prevW > 0) return `${perf.exercise.name} — heaviest set ${fromKg(bestW, units)} ${u}`;
+    if (bestE > prevE && prevE > 0) return `${perf.exercise.name} — est. 1RM ${fromKg(bestE, units)} ${u}`;
+    return null;
+  };
+
+  /** Complete the set in focus and route to the next thing (rest, superset peer, next exercise). */
+  const completeActive = async () => {
+    if (!session || !current || ui.paused || busy) return;
+    const row = activeRow(current, ui);
+    if (!row) return;
+    setBusy("complete");
+    try {
+      const fresh = await saveSet(current, row, true);
+      if (!fresh) return;
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+      // carry the values forward into the next empty working set
+      const nextEmpty = setRows(fresh, getActiveUI(session.id)).find((r) => !r.done && r.n > row.n && !r.warmup && r.weightKg == null && r.reps == null);
+      if (nextEmpty && !row.warmup) patchUI((c) => ({ ...c, drafts: { ...c.drafts, [setKey(fresh.id, nextEmpty.n)]: { weightKg: row.weightKg, reps: row.reps, rpe: null } } }));
+      const nextSession = { ...session, performances: session.performances.map((p) => (p.id === fresh.id ? fresh : p)) };
+      const doneNow = exerciseComplete(fresh, ui);
+      let hadPr = false;
+      if (doneNow && !row.warmup) {
+        const pr = findPR(fresh);
+        if (pr) {
+          hadPr = true;
+          setMilestone({ kind: "pr", title: "New personal record", detail: pr });
+          setCue({ event: "pr", ctx: { prDetail: pr.split("— ")[1] } });
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        } else {
+          setMilestone({ kind: "exercise", title: `${fresh.exercise.name} complete`, detail: `${workingRows(fresh, ui).filter((r) => r.done).length} sets` });
+        }
+      }
+      if (row.warmup) return; // no rest/advance after a warm-up
+
+      const lastRpe = row.rpe;
+      // superset routing: interleave peers, rest only after the round
+      const peers = supersetPeers(nextSession, fresh).filter((p) => !ui.skipped.includes(p.id));
+      if (peers.length > 1) {
+        const idx = peers.findIndex((p) => p.id === fresh.id);
+        for (let k = 1; k <= peers.length; k++) {
+          const cand = peers[(idx + k) % peers.length];
+          if (activeRow(cand, ui) && !exerciseComplete(cand, ui)) {
+            patchUI((c) => ({ ...c, cursor: cand.id }));
+            if ((idx + k) % peers.length <= idx) {
+              const sec = adaptiveRest(fresh.exercise.mechanic, lastRpe);
+              startRest(sec);
+              setCue({ event: "rest", ctx: { restSeconds: sec } });
+            } else setCue({ event: "superset-next", ctx: { exerciseName: cand.exercise.name } });
+            return;
+          }
+        }
+      }
+
+      if (doneNow) {
+        const nextId = nextFocus(nextSession, getActiveUI(session.id), fresh.id);
+        const left = nextSession.performances.filter((p) => !ui.skipped.includes(p.id) && !exerciseComplete(p, ui)).length;
+        if (!hadPr) setCue({ event: left <= 0 ? "finish" : left === 1 ? "almost-done" : "exercise-done", ctx: { exercisesLeft: left, exerciseName: fresh.exercise.name } });
+        if (!nextId) {
+          setTimeout(() => setSheet("end"), 900);
+          return;
+        }
+        patchUI((c) => ({ ...c, cursor: nextId }));
+        startRest(DEFAULT_REST);
+      } else {
+        const sec = adaptiveRest(fresh.exercise.mechanic, lastRpe);
+        startRest(sec);
+        setCue({ event: "rest", ctx: { restSeconds: sec, setsLeftInExercise: workingRows(fresh, ui).filter((r) => !r.done).length } });
+      }
+    } catch (e) {
+      toast.error(errorMessage(e as Error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // ── add / swap / skip / defer ────────────────────────────────────────────
   const addExercise = async (ex: Exercise) => {
     if (!session) return;
-    const order = Math.max(-1, ...session.performances.map((p) => p.order)) + 1;
+    setSheet(null);
     try {
+      const order = Math.max(-1, ...session.performances.map((p) => p.order)) + 1;
       const perf = await api.sessions.addPerformance(session.id, ex.id, order);
       setSession({ ...session, performances: [...session.performances, perf] });
-      setAdding(false);
+      patchUI((c) => ({
+        ...c,
+        cursor: c.cursor && session.performances.some((p) => p.id === c.cursor && !exerciseComplete(p, c)) ? c.cursor : perf.id,
+        planned: { ...c.planned, [perf.id]: 3 },
+        targets: { ...c.targets, [perf.id]: "3 × 8–12" },
+      }));
+      toast.success(`${ex.name} added`);
     } catch (e) {
-      Alert.alert("Couldn't add exercise", e instanceof Error ? e.message : "Try again.");
+      toast.error(errorMessage(e as Error));
     }
   };
 
-  const swap = async (perf: ExercisePerformance, slug: string) => {
+  const swapTo = async (perf: ExercisePerformance, exerciseId: string, name: string) => {
     if (!session) return;
+    setSheet(null);
     try {
-      const found = await api.library.exercise(slug);
-      const next = await api.sessions.addPerformance(session.id, found.id, perf.order);
-      setSession({ ...session, performances: session.performances.map((p) => (p.id === perf.id ? next : p)) });
-      setSwapFor(null);
+      const next = await api.sessions.addPerformance(session.id, exerciseId, perf.order);
+      setSession({ ...session, performances: [...session.performances, next] });
+      const remaining = Math.max(1, workingRows(perf, ui).filter((r) => !r.done).length);
+      patchUI((c) => ({
+        ...c,
+        skipped: [...c.skipped.filter((x) => x !== perf.id), perf.id],
+        cursor: next.id,
+        swappedFrom: { ...c.swappedFrom, [next.id]: perf.exercise.name },
+        planned: { ...c.planned, [next.id]: remaining },
+        targets: { ...c.targets, [next.id]: c.targets[perf.id] ?? "3 × 8–12" },
+      }));
+      setCue({ event: "substituted", ctx: { exerciseName: name } });
     } catch (e) {
-      Alert.alert("Couldn't swap", e instanceof Error ? e.message : "Try again.");
+      toast.error(errorMessage(e as Error));
     }
   };
 
-  // ── finish / abandon ─────────────────────────────────────────────────────
+  const defer = (perf: ExercisePerformance, reason: string) => {
+    if (!session) return;
+    patchUI((c) => {
+      const next = { ...c, deferred: { ...c.deferred, [perf.id]: reason } };
+      return { ...next, cursor: nextFocus(session, next, perf.id) ?? perf.id };
+    });
+    setCue({ event: "deferred", ctx: { exerciseName: perf.exercise.name } });
+    setSheet(null);
+  };
+  const resume = (perf: ExercisePerformance) => {
+    patchUI((c) => {
+      const deferred = { ...c.deferred };
+      delete deferred[perf.id];
+      return { ...c, deferred, cursor: perf.id };
+    });
+    setCue({ event: "resumed", ctx: { exerciseName: perf.exercise.name } });
+    setSheet(null);
+  };
+  const setSkip = (perf: ExercisePerformance, skip: boolean) => {
+    if (!session) return;
+    patchUI((c) => {
+      const next = { ...c, skipped: skip ? [...c.skipped, perf.id] : c.skipped.filter((x) => x !== perf.id) };
+      return { ...next, cursor: skip && c.cursor === perf.id ? nextFocus(session, next, perf.id) : c.cursor ?? perf.id };
+    });
+  };
+
+  // ── finish / leave ───────────────────────────────────────────────────────
   const finish = async () => {
-    if (!session) return;
-    setFinishing(true);
+    if (!session || busy === "finish") return;
+    setBusy("finish");
+    const s = session;
+    const flow = getActiveUI(s.id);
+    const durationSec = elapsedSec(s, flow);
     try {
-      const done = await api.sessions.finish(session.id, { durationSeconds: elapsed });
+      // the server totals every row with weight × reps, so drop any unfinished rows first
+      for (const p of s.performances) for (const set of p.sets) if (!set.completedAt) await api.sessions.deleteSet(s.id, p.id, set.setNumber).catch(() => {});
+      const done = await api.sessions.finish(s.id, { durationSeconds: durationSec });
+      cancelRestAlert();
+      const prs = (done.personalRecords ?? []).map((p) => `${p.exercise?.name ?? "Lift"} — ${p.recordType.replace(/_/g, " ")}`);
+      const dash = await api.dashboard().catch(() => null);
+      const coins = await grantWorkoutRewards({ sessionId: s.id, volumeKg: done.totalVolumeKg, prs: prs.length, streakDays: dash?.streakDays });
+      const muscles = [...new Set((done.muscleActivations ?? []).filter((m) => m.role === "primary").map((m) => m.muscleGroup?.name).filter(Boolean) as string[])].slice(0, 6);
+      const last = priorRef.current.find((x) => x.name === s.name && x.id !== s.id);
+      let protein: Summary["protein"] = null;
+      const day = await api.food.day().catch(() => null);
+      if (day?.goal?.proteinGrams && day.totals.protein < day.goal.proteinGrams * 0.85) protein = { eaten: Math.round(day.totals.protein), target: day.goal.proteinGrams };
+      clearActiveUI(s.id);
       invalidateResource();
-      setSummary(done);
+      setSummary({
+        session: done,
+        durationSec: done.durationSeconds || durationSec,
+        volumeKg: done.totalVolumeKg,
+        sets: done.performances.reduce((n, p) => n + p.sets.filter((x) => x.completedAt && !x.isWarmup).length, 0),
+        prs,
+        coins,
+        muscles: muscles.length ? muscles : [...new Set(done.performances.filter((p) => p.sets.some((x) => x.completedAt)).map((p) => p.exercise.bodyPart ?? p.exercise.category).filter(Boolean) as string[])].slice(0, 6),
+        // replaced exercises are recorded as skipped + a swappedFrom entry; only count real skips
+        skipped: Math.max(0, flow.skipped.length - Object.keys(flow.swappedFrom).length),
+        vsLast: last ? { volumeKg: done.totalVolumeKg - last.totalVolumeKg, durationSec: (done.durationSeconds || durationSec) - last.durationSeconds } : null,
+        protein,
+      });
+      setSheet(null);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
     } catch (e) {
-      Alert.alert("Couldn't finish", e instanceof Error ? e.message : "Try again.");
+      toast.error(errorMessage(e as Error));
     } finally {
-      setFinishing(false);
+      setBusy(null);
     }
   };
 
-  const confirmFinish = () => {
-    const open = session?.performances.reduce((n, p) => n + p.sets.filter((s) => !s.completedAt).length, 0) ?? 0;
-    Alert.alert("Finish workout?", open ? `${open} sets aren't logged yet.` : "Nice work.", [
-      { text: "Keep going", style: "cancel" },
-      { text: "Finish", onPress: finish },
-    ]);
+  const discard = async () => {
+    if (!session) return;
+    setBusy("discard");
+    try {
+      await api.sessions.abandon(session.id);
+      clearActiveUI(session.id);
+      cancelRestAlert();
+      invalidateResource();
+      setSheet(null);
+      router.replace("/workouts");
+    } catch (e) {
+      toast.error(errorMessage(e as Error));
+    } finally {
+      setBusy(null);
+    }
   };
 
-  const abandon = () =>
-    Alert.alert("Discard workout?", "This session won't be saved.", [
-      { text: "Keep going", style: "cancel" },
-      { text: "Discard", style: "destructive", onPress: async () => { if (session) await api.sessions.abandon(session.id).catch(() => {}); invalidateResource(); router.replace("/workouts"); } },
-    ]);
+  const pauseAndExit = () => {
+    if (!ui.paused) togglePause();
+    setSheet(null);
+    invalidateResource("active-session");
+    if (router.canGoBack()) router.back();
+    else router.replace("/workouts");
+  };
 
-  const progress = useMemo(() => {
-    const all = session?.performances.flatMap((p) => p.sets) ?? [];
-    const total = session?.performances.reduce((n, p) => n + Math.max(p.sets.length, 1), 0) ?? 0;
-    return { done: all.filter((s) => s.completedAt).length, total };
-  }, [session]);
-
-  if (loading) return <Screen><PageSkeleton /></Screen>;
+  // ── render ───────────────────────────────────────────────────────────────
+  if (loading && !session && !summary) return <Screen><PageSkeleton /></Screen>;
+  if (summary) return <SummaryView summary={summary} units={units} look={look} savedTpl={savedTpl} onSaveTpl={async () => { try { await saveSessionAsTemplate(summary.session); setSavedTpl(true); toast.success("Saved to your templates"); } catch (e) { toast.error(errorMessage(e as Error)); } }} onRepeat={async () => { try { await startRepeat(summary.session); setSummary(null); setSavedTpl(false); invalidateResource("active-session"); await load(); } catch (e) { toast.error(errorMessage(e as Error)); } }} onDone={() => router.replace("/workouts")} onProgress={() => router.replace("/progress")} />;
+  if (loadError && !session)
+    return (
+      <Screen>
+        <EmptyState title="Couldn't load your workout" body={loadError} action="Try again" onAction={load} />
+        <View style={{ marginTop: 12 }}><Button label="Back to training" variant="ghost" onPress={() => router.replace("/workouts")} /></View>
+      </Screen>
+    );
   if (!session)
     return (
       <Screen>
-        <EmptyState title="No workout in progress" body="Start one from the Training tab." action="Go to training" onAction={() => router.replace("/workouts")} />
+        <EmptyState title="No active workout" body="Start today's session from the plan and it'll open here." action="Go to today's plan" onAction={() => router.replace("/workouts")} />
       </Screen>
     );
 
-  // ── summary ──────────────────────────────────────────────────────────────
-  if (summary) {
-    return (
-      <Screen>
-        <Text variant="title">Workout complete</Text>
-        <Text color="secondary" style={{ marginBottom: 16 }}>{summary.name}</Text>
-        <Card>
-          <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
-            <Stat label="TIME" value={fmtDuration(summary.durationSeconds || elapsed)} />
-            <Stat label="VOLUME" value={`${Math.round(fromKg(summary.totalVolumeKg, units)).toLocaleString()} ${u}`} />
-            <Stat label="SETS" value={String(summary.performances.reduce((n, p) => n + p.sets.filter((s) => s.completedAt).length, 0))} />
-          </View>
-        </Card>
-        {summary.personalRecords?.length ? (
-          <Card title="New records">
-            {summary.personalRecords.map((pr) => (
-              <View key={pr.id} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 6 }}>
-                <Text>{pr.exercise?.name ?? "Record"}</Text>
-                <Num size={16} style={{ color: colors.lime }}>{pr.recordType === "max_reps" ? pr.value : `${Math.round(fromKg(pr.value, units))} ${u}`}</Num>
-              </View>
-            ))}
-          </Card>
-        ) : null}
-        {summary.trainerComment ? <Card title="From your trainer"><Text color="secondary">{summary.trainerComment}</Text></Card> : null}
-        {summary.progression?.nextUnlock ? <Card title="Next unlock"><Text color="secondary">{summary.progression.nextUnlock.requirement}</Text></Card> : null}
-        <View style={{ gap: 10 }}>
-          <Button label="Save as template" variant="ghost" onPress={async () => { try { await saveSessionAsTemplate(summary); Alert.alert("Saved", "Find it under Templates."); } catch { Alert.alert("Couldn't save"); } }} />
-          <Button label="Done" onPress={() => router.replace("/dashboard")} />
-        </View>
-      </Screen>
-    );
-  }
+  const prog = progressOf(session, ui);
+  const elapsed = elapsedSec(session, ui, now);
+  const liveVolKg = session.performances.reduce((n, p) => n + p.sets.filter((s) => s.completedAt && !s.isWarmup).reduce((m, s) => m + (s.weightKg ?? 0) * (s.reps ?? 0), 0), 0);
+  const trainable = perfs.filter((p) => !ui.skipped.includes(p.id));
+  const resting = !!ui.restEndsAt && restLeft > 0;
 
   return (
-    <>
-      <Screen>
-        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-          <Pressable onPress={() => router.back()} hitSlop={12}><Ionicons name="chevron-down" size={24} color={colors.textSecondary} /></Pressable>
-          <View style={{ flexDirection: "row", gap: 18 }}>
-            <Pressable onPress={togglePause} hitSlop={10}><Ionicons name={paused ? "play" : "pause"} size={22} color={colors.textSecondary} /></Pressable>
-            <Pressable onPress={abandon} hitSlop={10}><Ionicons name="trash-outline" size={22} color={colors.textSecondary} /></Pressable>
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <Atmosphere />
+      {/* HUD */}
+      <View style={{ paddingTop: insets.top + 6, paddingHorizontal: 20, paddingBottom: 10, gap: 8 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+          <Pressable onPress={() => setSheet("end")} hitSlop={12} accessibilityLabel="Leave workout" style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
+            <Ionicons name="chevron-down" size={22} color={colors.textSecondary} />
+            <Text variant="meta" color="secondary">Plan</Text>
+          </Pressable>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Pressable onPress={togglePause} accessibilityLabel={ui.paused ? "Resume workout" : "Pause workout"} style={{ flexDirection: "row", alignItems: "center", gap: 6, height: 34, paddingHorizontal: 12, borderRadius: radius.pill, backgroundColor: ui.paused ? "rgba(255,182,97,0.18)" : colors.surface }}>
+              <Ionicons name={ui.paused ? "play" : "pause"} size={13} color={ui.paused ? colors.amber : colors.textSecondary} />
+              <Num size={14}>{fmtClock(elapsed)}</Num>
+            </Pressable>
+            <Pressable onPress={() => setSheet("overview")} accessibilityLabel="Workout overview" style={{ height: 34, paddingHorizontal: 12, borderRadius: radius.pill, backgroundColor: colors.surface, flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Ionicons name="list" size={15} color={colors.textSecondary} />
+              <Text variant="meta" color="secondary">Overview</Text>
+            </Pressable>
           </View>
         </View>
-        <Text variant="title">{session.name}</Text>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 12, marginTop: 6, marginBottom: 12 }}>
-          <Num size={22}>{fmtClock(elapsed)}</Num>
-          <Text color="tertiary">{paused ? "Paused" : `${progress.done}/${progress.total} sets`}</Text>
+        <Text variant="heading" numberOfLines={1}>{session.name}</Text>
+        <View style={{ flexDirection: "row", gap: 4 }}>
+          {trainable.map((p) => {
+            const ph = phaseOf(p, ui);
+            const c = ph === "done" ? colors.lime : p.id === ui.cursor ? colors.pink : ph === "deferred" ? colors.amber : "rgba(255,255,255,0.14)";
+            return <Pressable key={p.id} onPress={() => focus(p.id)} hitSlop={{ top: 10, bottom: 10 }} accessibilityLabel={`Go to ${p.exercise.name}`} style={{ flex: 1, height: 5, borderRadius: 3, backgroundColor: c }} />;
+          })}
         </View>
-        <ProgressBar pct={progress.total ? (progress.done / progress.total) * 100 : 0} />
+        {trainable.length ? (
+          <Text variant="meta" color="tertiary">
+            Exercise {Math.min(prog.exercisesDone + 1, prog.exercisesTotal)}/{prog.exercisesTotal} · {prog.setsDone}/{prog.setsTotal} sets · {Math.round(fromKg(liveVolKg, units)).toLocaleString()} {u}
+          </Text>
+        ) : null}
+      </View>
 
-        {restEnds ? (
-          <Card style={{ marginTop: 16, alignItems: "center", gap: 10 }}>
-            <Label>REST</Label>
-            <Num size={56}>{fmtClock(restLeft)}</Num>
-            <ProgressBar pct={(restLeft / Math.max(restTotal, 1)) * 100} tone="cyan" />
-            <View style={{ flexDirection: "row", gap: 8 }}>
-              <Chip label="−15s" onPress={() => setRestEnds((e) => (e ? e - 15000 : e))} />
-              <Chip label="+15s" onPress={() => setRestEnds((e) => (e ? e + 15000 : e))} />
-              <Chip label="Skip" active onPress={() => setRestEnds(null)} />
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: insets.bottom + 40, gap: 14 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+        {ui.paused ? (
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 14, borderRadius: radius.medium, backgroundColor: "rgba(255,182,97,0.12)", borderWidth: 1, borderColor: "rgba(255,182,97,0.3)" }}>
+            <Text style={{ color: colors.amber }}>Workout paused · timer stopped</Text>
+            <Chip label="Resume" active onPress={togglePause} />
+          </View>
+        ) : null}
+
+        <MilestoneBanner m={milestone} />
+
+        {session.performances.length === 0 ? (
+          <View style={{ padding: 24, borderRadius: radius.large, borderWidth: 1, borderStyle: "dashed", borderColor: colors.lineHighlight, alignItems: "center", gap: 8 }}>
+            <Text variant="heading">Empty workout</Text>
+            <Text color="secondary" style={{ textAlign: "center" }}>Add exercises as you go. Log your sets, rest between them, and finish when you're done.</Text>
+            <View style={{ alignSelf: "stretch", marginTop: 8 }}><Button label="Add your first exercise" variant="accent" onPress={() => setSheet("add")} /></View>
+          </View>
+        ) : null}
+
+        {current && resting ? (
+          <RestCard left={restLeft} total={ui.restTotal} onAdjust={adjustRest} onSkip={stopRest} current={current} ui={ui} units={units} cue={trainerCue(cue.event, cue.ctx)} look={look} />
+        ) : current ? (
+          <FocusCard
+            perf={current}
+            ui={ui}
+            units={units}
+            step={step}
+            busy={busy === "complete"}
+            paused={ui.paused}
+            position={trainable.findIndex((p) => p.id === current.id) + 1}
+            total={trainable.length}
+            superset={current.supersetGroup != null ? `Superset ${supersetLetter(current.supersetGroup)} · ${supersetPeers(session, current).findIndex((p) => p.id === current.id) + 1}/${supersetPeers(session, current).length}` : null}
+            history={history[current.exercise.slug] ?? null}
+            cue={trainerCue(cue.event, cue.ctx)}
+            look={look}
+            onPatch={(row, p) => patchDraft(current, row, p)}
+            onAmrap={(row) => patchUI((c) => ({ ...c, amrap: row.amrap ? c.amrap.filter((k) => k !== setKey(current.id, row.n)) : [...c.amrap, setKey(current.id, row.n)] }))}
+            onComplete={completeActive}
+            onAddSet={(w) => addSet(current, w)}
+            onHowto={() => setSheet("howto")}
+            onBusy={() => defer(current, "machine busy")}
+            onReplace={() => {
+              setSwapFor(current);
+              setSheet("swap");
+            }}
+          />
+        ) : session.performances.length ? (
+          <View style={{ padding: 20, borderRadius: radius.large, backgroundColor: colors.surface, gap: 10, alignItems: "center" }}>
+            <Ionicons name="checkmark-done-circle" size={36} color={colors.lime} />
+            <Text variant="heading">Everything's logged</Text>
+            <Text color="secondary" style={{ textAlign: "center" }}>Finish to save the session, or add another exercise.</Text>
+            <View style={{ alignSelf: "stretch", gap: 10 }}>
+              <Button label="Finish & save workout" variant="accent" loading={busy === "finish"} onPress={finish} />
+              <Button label="Add exercise" variant="ghost" onPress={() => setSheet("add")} />
             </View>
-          </Card>
+          </View>
         ) : null}
 
-        <View style={{ marginTop: 18, gap: 14 }}>
-          {session.performances.length === 0 ? (
-            <Text color="secondary">Add exercises as you go. Log your sets, rest between them, and finish when you're done.</Text>
-          ) : null}
-          {session.performances.map((perf) => (
-            <Card key={perf.id} style={{ marginBottom: 0 }}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                <View style={{ flex: 1 }}>
-                  <Text variant="heading" style={{ fontSize: 18 }}>{perf.exercise.name}</Text>
-                  {perf.supersetGroup != null ? <Label>SUPERSET {String.fromCharCode(64 + perf.supersetGroup)}</Label> : null}
-                  {perf.prescribedWeightKg || perf.prescribedReps ? (
-                    <Text variant="meta" color="tertiary">Target {perf.prescribedWeightKg ? `${fromKg(perf.prescribedWeightKg, units)} ${u} × ` : ""}{perf.prescribedReps ?? "—"}{perf.prescribedRpe ? ` @ RPE ${perf.prescribedRpe}` : ""}</Text>
-                  ) : null}
-                </View>
-                <View style={{ flexDirection: "row", gap: 16 }}>
-                  <Pressable hitSlop={8} onPress={() => setPlateFor(parseFloat(setValue(perf, perf.sets[0], perf.sets[0]?.setNumber ?? 1).weight) || 0)}><Ionicons name="disc-outline" size={20} color={colors.textSecondary} /></Pressable>
-                  <Pressable hitSlop={8} onPress={() => setSwapFor(perf)}><Ionicons name="swap-horizontal" size={20} color={colors.textSecondary} /></Pressable>
-                </View>
-              </View>
-              <View style={{ flexDirection: "row", marginTop: 12, paddingHorizontal: 4 }}>
-                <Label style={{ width: 32 }}>SET</Label>
-                <Label style={{ flex: 1, textAlign: "center" }}>{u.toUpperCase()}</Label>
-                <Label style={{ flex: 1, textAlign: "center" }}>REPS</Label>
-                <Label style={{ flex: 1, textAlign: "center" }}>RPE</Label>
-                <View style={{ width: 44 }} />
-              </View>
-              {perf.sets.map((set) => {
-                const d = setValue(perf, set, set.setNumber);
-                const done = !!set.completedAt;
-                const cell = { flex: 1, height: 42, marginHorizontal: 3, borderRadius: 12, backgroundColor: done ? "rgba(216,255,99,0.10)" : colors.surfaceRecessed, color: colors.textPrimary, textAlign: "center" as const, fontFamily: fonts.num, fontSize: 16 };
-                return (
-                  <View key={set.id} style={{ flexDirection: "row", alignItems: "center", marginTop: 8 }}>
-                    <Pressable onLongPress={() => removeSet(perf, set.setNumber)} style={{ width: 32 }}>
-                      <Text color={set.isWarmup ? "pink" : "tertiary"} style={{ fontSize: 14 }}>{set.isWarmup ? "W" : set.setNumber}</Text>
-                    </Pressable>
-                    <TextInput style={cell} value={d.weight} onChangeText={(t) => patchDraft(perf.id, set.setNumber, d, { weight: t })} keyboardType="decimal-pad" placeholder="—" placeholderTextColor={colors.textTertiary} />
-                    <TextInput style={cell} value={d.reps} onChangeText={(t) => patchDraft(perf.id, set.setNumber, d, { reps: t })} keyboardType="number-pad" placeholder="—" placeholderTextColor={colors.textTertiary} />
-                    <TextInput style={cell} value={d.rpe} onChangeText={(t) => patchDraft(perf.id, set.setNumber, d, { rpe: t })} keyboardType="decimal-pad" placeholder="—" placeholderTextColor={colors.textTertiary} />
-                    <Pressable onPress={() => completeSet(perf, set.setNumber, !done)} style={{ width: 44, height: 42, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: done ? colors.lime : colors.surface }}>
-                      <Ionicons name="checkmark" size={20} color={done ? "#1a1a1a" : colors.textTertiary} />
-                    </Pressable>
+        {current && !resting ? <SetList perf={current} ui={ui} units={units} history={history[current.exercise.slug] ?? null} onToggle={(r) => toggleRow(current, r)} onDelete={(r) => deleteRow(current, r)} /> : null}
+
+        <Pressable onPress={() => setSheet("end")} style={{ alignSelf: "center", paddingVertical: 12, paddingHorizontal: 20 }} accessibilityRole="button">
+          <Text color="tertiary">End workout</Text>
+        </Pressable>
+      </ScrollView>
+
+      {/* overview */}
+      <Sheet visible={sheet === "overview"} onClose={() => setSheet(null)} title="Workout overview" eyebrow={session.name}>
+        {perfs.map((p, i) => {
+          const ph = phaseOf(p, ui);
+          const rows = workingRows(p, ui);
+          const header = p.supersetGroup != null && perfs[i - 1]?.supersetGroup !== p.supersetGroup;
+          const icon = ph === "done" ? "checkmark-circle" : ph === "active" ? "play-circle" : ph === "deferred" ? "time-outline" : "ellipse-outline";
+          const tint = ph === "done" ? colors.lime : ph === "active" ? colors.pink : ph === "deferred" ? colors.amber : colors.textTertiary;
+          return (
+            <View key={p.id} style={{ gap: 6 }}>
+              {header ? <Label style={{ color: colors.mauve }}>SUPERSET {supersetLetter(p.supersetGroup!)} · BACK-TO-BACK, REST AFTER THE ROUND</Label> : null}
+              <View style={{ padding: 12, borderRadius: radius.small, backgroundColor: ph === "active" ? "rgba(213,26,122,0.12)" : colors.surface, opacity: ph === "skipped" ? 0.5 : 1, gap: 8 }}>
+                <Pressable onPress={() => ph !== "skipped" && focus(p.id)} style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                  <Ionicons name={icon} size={18} color={tint} />
+                  <View style={{ flex: 1 }}>
+                    <Text numberOfLines={1} style={{ textDecorationLine: ph === "skipped" ? "line-through" : "none" }}>{p.exercise.name}</Text>
+                    <Text variant="meta" color="tertiary">{ph === "deferred" ? ui.deferred[p.id] : ph === "skipped" ? (Object.values(ui.swappedFrom).includes(p.exercise.name) ? "replaced" : "skipped") : `${rows.filter((r) => r.done).length}/${rows.length} sets`}</Text>
                   </View>
-                );
-              })}
-              <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
-                <Chip label="+ Set" onPress={() => addSet(perf)} />
-                <Chip label="+ Warm-up" onPress={() => { const n = Math.max(0, ...perf.sets.map((s) => s.setNumber)) + 1; void completeSet(perf, n, false, true); }} />
+                </Pressable>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                  {ph !== "skipped" && ph !== "done" && ph !== "deferred" ? <Chip label="Do later" onPress={() => defer(p, "do later")} /> : null}
+                  {ph === "deferred" ? <Chip label="Resume now" active onPress={() => resume(p)} /> : null}
+                  {ph !== "skipped" ? <Chip label="Replace" onPress={() => { setSwapFor(p); setSheet("swap"); }} /> : null}
+                  {ph === "skipped" ? <Chip label="Add back" onPress={() => setSkip(p, false)} /> : ph !== "done" ? <Chip label="Skip" onPress={() => setSkip(p, true)} /> : null}
+                </View>
               </View>
-            </Card>
-          ))}
-        </View>
+            </View>
+          );
+        })}
+        <Button label="Add exercise" variant="ghost" icon={<Ionicons name="add" size={18} color={colors.onColor} />} onPress={() => setSheet("add")} />
+        <Text variant="meta" color="tertiary">Changes apply to today's session only — your saved plan isn't touched.</Text>
+      </Sheet>
 
-        <View style={{ gap: 10, marginTop: 8 }}>
-          <Button label="Add exercise" variant="ghost" onPress={() => setAdding(true)} />
-          <Button label="Finish workout" variant="accent" loading={finishing} onPress={confirmFinish} />
-        </View>
-      </Screen>
+      <ExercisePicker visible={sheet === "add"} onClose={() => setSheet(null)} onPick={addExercise} />
+      <ExercisePicker visible={sheet === "swapLibrary"} title="Replace from library" onClose={() => setSheet(null)} onPick={(e) => swapFor && swapTo(swapFor, e.id, e.name)} />
+      <SwapSheet perf={sheet === "swap" ? swapFor : null} onClose={() => setSheet(null)} onPick={async (s) => { if (!swapFor) return; try { const found = await api.library.exercise(s.slug); await swapTo(swapFor, found.id, found.name); } catch (e) { toast.error(errorMessage(e as Error)); } }} onLibrary={() => setSheet("swapLibrary")} />
+      <ExerciseDetailSheet slug={sheet === "howto" && current ? current.exercise.slug : null} preview={current?.exercise} onClose={() => setSheet(null)} />
 
-      <ExercisePicker visible={adding} onClose={() => setAdding(false)} onPick={addExercise} />
-      <SwapSheet perf={swapFor} onClose={() => setSwapFor(null)} onPick={(slug) => swapFor && swap(swapFor, slug)} />
-      <PlateSheet total={plateFor} units={units} onClose={() => setPlateFor(null)} />
-    </>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={{ alignItems: "center", gap: 6 }}>
-      <Label>{label}</Label>
-      <Num size={22}>{value}</Num>
+      {/* leave / finish */}
+      <Sheet visible={sheet === "end"} onClose={() => setSheet(null)} title={prog.setsDone && prog.setsDone === prog.setsTotal ? "Everything's logged" : "Leave workout?"}>
+        <Text color="secondary">{prog.exercisesDone}/{prog.exercisesTotal} exercises · {prog.setsDone}/{prog.setsTotal} sets logged · {fmtDuration(elapsed)}</Text>
+        <Button label="Finish & save workout" variant="accent" loading={busy === "finish"} disabled={!prog.setsDone} onPress={finish} />
+        {!prog.setsDone ? <Text variant="meta" color="tertiary">Log at least one set to save this workout.</Text> : null}
+        <Button label="Continue workout" variant="ghost" onPress={() => setSheet(null)} />
+        <Button label="Pause & exit — resume later" variant="ghost" onPress={pauseAndExit} />
+        <Pressable onPress={discard} disabled={busy === "discard"} style={{ alignItems: "center", paddingVertical: 12 }} accessibilityRole="button">
+          <Text style={{ color: colors.danger }}>{busy === "discard" ? "Discarding…" : "Discard without saving"}</Text>
+        </Pressable>
+      </Sheet>
     </View>
   );
 }
 
-export function ExercisePicker({ visible, onClose, onPick }: { visible: boolean; onClose: () => void; onPick: (e: Exercise) => void }) {
-  const [q, setQ] = useState("");
-  const [items, setItems] = useState<Exercise[]>([]);
-  const [busy, setBusy] = useState(false);
-  const run = useCallback((text: string) => {
-    setBusy(true);
-    api.library.exercises({ q: text || undefined, take: 30 }).then((r) => setItems(r.items)).catch(() => {}).finally(() => setBusy(false));
-  }, []);
+// ── pieces ────────────────────────────────────────────────────────────────
+
+function MilestoneBanner({ m }: { m: { kind: "pr" | "exercise"; title: string; detail?: string } | null }) {
+  const a = useRef(new Animated.Value(0)).current;
+  const [shown, setShown] = useState(m);
   useEffect(() => {
-    if (!visible) return;
-    const t = setTimeout(() => run(q), 250);
-    return () => clearTimeout(t);
-  }, [q, visible, run]);
+    if (m) {
+      setShown(m);
+      a.setValue(0);
+      Animated.spring(a, { toValue: 1, useNativeDriver: true, stiffness: 300, damping: 18 }).start();
+    } else Animated.timing(a, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => setShown(null));
+  }, [m, a]);
+  if (!shown) return null;
+  const pr = shown.kind === "pr";
   return (
-    <Sheet visible={visible} onClose={onClose} title="Add exercise">
-      <TextInput value={q} onChangeText={setQ} placeholder="Search exercises" placeholderTextColor={colors.textTertiary} autoCapitalize="none" style={{ height: 48, borderRadius: radius.small, borderWidth: 1, borderColor: colors.lineSoft, backgroundColor: colors.surface, paddingHorizontal: 14, color: colors.textPrimary, fontFamily: fonts.regular, fontSize: 16 }} />
-      {busy && !items.length ? <Text color="tertiary">Searching…</Text> : null}
-      {items.map((e) => (
-        <Pressable key={e.id} onPress={() => onPick(e)} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.lineSoft }}>
-          <Text>{e.name}</Text>
-          <Text variant="meta" color="tertiary">{[e.category, ...e.equipment].join(" · ")}</Text>
-        </Pressable>
-      ))}
-    </Sheet>
+    <Animated.View accessibilityLiveRegion="polite" style={{ opacity: a, transform: [{ scale: a.interpolate({ inputRange: [0, 1], outputRange: [0.94, 1] }) }, { translateY: a.interpolate({ inputRange: [0, 1], outputRange: [-12, 0] }) }], flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: radius.medium, backgroundColor: pr ? "rgba(255,182,97,0.14)" : "rgba(216,255,99,0.10)", borderWidth: 1, borderColor: pr ? "rgba(255,182,97,0.4)" : "rgba(216,255,99,0.3)" }}>
+      <View style={{ width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: pr ? "rgba(255,182,97,0.22)" : "rgba(216,255,99,0.16)" }}>
+        <Ionicons name={pr ? "trophy" : "checkmark"} size={18} color={pr ? colors.amber : colors.lime} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={{ fontFamily: fonts.semibold, color: pr ? colors.amber : colors.lime }}>{shown.title}</Text>
+        {shown.detail ? <Text variant="meta" color="secondary">{shown.detail}</Text> : null}
+      </View>
+    </Animated.View>
   );
 }
 
-function SwapSheet({ perf, onClose, onPick }: { perf: ExercisePerformance | null; onClose: () => void; onPick: (slug: string) => void }) {
+function FocusCard(props: {
+  perf: ExercisePerformance;
+  ui: ActiveUI;
+  units: Units;
+  step: number;
+  busy: boolean;
+  paused: boolean;
+  position: number;
+  total: number;
+  superset: string | null;
+  history: ExerciseHistory | null;
+  cue: string;
+  look?: string;
+  onPatch: (row: SetRow, p: Partial<{ weightKg: number | null; reps: number | null; rpe: number | null; warmup: boolean }>) => void;
+  onAmrap: (row: SetRow) => void;
+  onComplete: () => void;
+  onAddSet: (warmup: boolean) => void;
+  onHowto: () => void;
+  onBusy: () => void;
+  onReplace: () => void;
+}) {
+  const { perf, ui, units } = props;
+  const u = unitLabel(units);
+  const rows = setRows(perf, ui);
+  const row = activeRow(perf, ui);
+  const working = rows.filter((r) => !r.warmup);
+  const doneW = working.filter((r) => r.done).length;
+  // same source as the website: the API url if there is one, else the RepDB illustration matched by name
+  const cat = useMemo(() => repdbEntryFor(perf.exercise.name), [perf.exercise.name]);
+  const frames = [perf.exercise.imageStartUrl ?? repdbImage(cat?.imgStart), perf.exercise.imageEndUrl ?? repdbImage(cat?.imgEnd)].filter(Boolean) as string[];
+  const [frame, setFrame] = useState(0);
+  useEffect(() => {
+    if (frames.length < 2) return;
+    const t = setInterval(() => setFrame((f) => (f ? 0 : 1)), 800);
+    return () => clearInterval(t);
+  }, [frames.length]);
+  const last = props.history?.history[0];
+  const lastSets = last?.sets.filter((s) => s.weightKg != null || s.reps != null) ?? [];
+  const rxW = perf.prescribedWeightKg ?? null;
+  const rxR = perf.prescribedReps ?? null;
+  const bestE = lastSets.length ? Math.max(...lastSets.map((s) => epley1RM(s.weightKg ?? 0, s.reps ?? 0))) : 0;
+  const pct = rxW && bestE ? Math.round((rxW / bestE) * 100) : null;
+  const bodyweight = !!perf.exercise.isBodyweight;
+  const wDisp = row?.weightKg != null ? fromKg(row.weightKg, units) : null;
+  const plates = wDisp != null && !bodyweight ? plateCombo(wDisp, units === "metric" ? 20 : 45, u) : null;
+  const note = (perf.prescriptionAudit?.output as { note?: string } | undefined)?.note;
+
+  const fillPrevious = () => {
+    if (!row || !lastSets.length) return;
+    const top = [...lastSets].sort((a, b) => (b.weightKg ?? 0) - (a.weightKg ?? 0))[0];
+    props.onPatch(row, { weightKg: top.weightKg, reps: top.reps });
+    Haptics.selectionAsync().catch(() => {});
+  };
+
+  if (!row) return null;
+  return (
+    <View style={[{ borderRadius: radius.large, overflow: "hidden", backgroundColor: colors.surfaceOpaque, borderWidth: 1, borderColor: colors.lineSoft }, shadow.soft]}>
+      {frames.length ? (
+        <View style={{ height: 170, backgroundColor: "#fff" }}>
+          <Image source={{ uri: frames[frame % frames.length] }} style={{ flex: 1 }} resizeMode="contain" accessibilityLabel={`${perf.exercise.name} demonstration`} />
+          <Pressable onPress={props.onHowto} style={{ position: "absolute", right: 12, bottom: 12, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, height: 32, borderRadius: radius.pill, backgroundColor: "rgba(20,8,16,0.72)" }} accessibilityRole="button">
+            <Ionicons name="information-circle-outline" size={16} color="#fff" />
+            <Text variant="meta" style={{ color: "#fff" }}>How to</Text>
+          </Pressable>
+        </View>
+      ) : null}
+      <View style={{ padding: 18, gap: 14 }}>
+        <View style={{ gap: 4 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            {props.superset ? <View style={{ paddingHorizontal: 8, height: 22, borderRadius: 11, justifyContent: "center", backgroundColor: "rgba(179,101,150,0.25)" }}><Text variant="meta" style={{ color: colors.pinkSoft }}>{props.superset}</Text></View> : null}
+            <Label>EXERCISE {props.position}/{props.total}{ui.swappedFrom[perf.id] ? ` · SWAPPED FROM ${ui.swappedFrom[perf.id].toUpperCase()}` : ""}</Label>
+            {!frames.length ? <Pressable onPress={props.onHowto} hitSlop={8}><Text variant="meta" color="pink">How to</Text></Pressable> : null}
+          </View>
+          <Text style={{ fontFamily: fonts.light, fontSize: 30, lineHeight: 34, letterSpacing: -0.6 }}>{perf.exercise.name}</Text>
+          <View style={{ flexDirection: "row", alignItems: "baseline", gap: 6 }}>
+            {row.warmup ? <Text style={{ fontFamily: fonts.semibold, color: colors.cyan }}>Warm-up set</Text> : <><Num size={26} style={{ color: colors.pink }}>{doneW + 1}</Num><Text color="tertiary">/ {working.length} sets · {ui.targets[perf.id] ?? "3 × 8–12"}</Text></>}
+          </View>
+        </View>
+
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <Pressable onPress={fillPrevious} disabled={!lastSets.length} style={{ flex: 1, padding: 12, borderRadius: radius.small, backgroundColor: colors.surface, gap: 4 }} accessibilityHint="Fills the set with your last top set">
+            <Label>PREVIOUS{lastSets.length ? " · TAP TO FILL" : ""}</Label>
+            <Text numberOfLines={1} style={{ fontFamily: fonts.num, fontSize: 14 }}>{lastSets.length ? lastSets.slice(0, 3).map((s) => `${s.weightKg != null ? fromKg(s.weightKg, units) : "BW"}×${s.reps ?? "—"}`).join("  ") : props.history ? "First time" : "…"}</Text>
+          </Pressable>
+          <View style={{ flex: 1, padding: 12, borderRadius: radius.small, backgroundColor: "rgba(213,26,122,0.10)", gap: 4 }}>
+            <Label style={{ color: colors.pinkSoft }}>TODAY</Label>
+            <Text numberOfLines={1} style={{ fontFamily: fonts.num, fontSize: 14 }}>{rxW != null || rxR != null ? `${rxW != null ? `${fromKg(rxW, units)} ${u} ` : ""}${rxR != null ? `× ${rxR}` : ""}` : ui.targets[perf.id] ?? "—"}</Text>
+            {pct && pct >= 40 && pct <= 115 ? <Text variant="meta" color="tertiary">{pct}% of est. 1RM</Text> : note ? <Text variant="meta" color="tertiary" numberOfLines={2}>{note}</Text> : null}
+          </View>
+        </View>
+
+        {!bodyweight ? (
+          <View style={{ flexDirection: "row" }}>
+            <Stepper label="weight" suffix={u} value={wDisp} step={props.step} max={2000} onChange={(v) => props.onPatch(row, { weightKg: v == null ? null : toKg(v, units) })} />
+          </View>
+        ) : null}
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <Stepper label={row.amrap ? "reps · amrap" : "reps"} value={row.reps} step={1} max={200} onChange={(v) => props.onPatch(row, { reps: v == null ? null : Math.round(v) })} placeholder={row.amrap ? "max" : "—"} />
+          <Stepper label="rpe" value={row.rpe} step={0.5} max={10} onChange={(v) => props.onPatch(row, { rpe: v })} />
+        </View>
+
+        {plates && plates.perSide.length ? (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <Ionicons name="disc-outline" size={14} color={colors.textTertiary} />
+            <Text variant="meta" color="tertiary">Plates / side</Text>
+            <Text style={{ fontFamily: fonts.num, fontSize: 13 }}>{plateLabel(plates.perSide)}</Text>
+            {plates.loaded !== wDisp ? <Text variant="meta" color="tertiary">→ loads {plates.loaded} {u}</Text> : null}
+          </View>
+        ) : null}
+
+        <Button label={props.paused ? "Paused — resume to log" : row.warmup ? "Complete warm-up" : `Complete set ${doneW + 1}`} variant="accent" loading={props.busy} disabled={props.paused} onPress={props.onComplete} icon={<Ionicons name="checkmark" size={20} color={colors.onColor} />} />
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+          <Chip label="+ Set" onPress={() => props.onAddSet(false)} />
+          <Chip label="+ Warm-up" onPress={() => props.onAddSet(true)} />
+          <Chip label={row.warmup ? "Unmark warm-up" : "This is a warm-up"} active={row.warmup} onPress={() => props.onPatch(row, { warmup: !row.warmup })} />
+          <Chip label={row.amrap ? "Unmark AMRAP" : "AMRAP set"} active={row.amrap} onPress={() => props.onAmrap(row)} />
+          <Chip label="Machine busy" onPress={props.onBusy} />
+          <Chip label="Replace" onPress={props.onReplace} />
+        </ScrollView>
+
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingTop: 4 }}>
+          <KaiOrb size={26} look={props.look} />
+          <Text color="secondary" style={{ flex: 1, fontStyle: "italic" }}>{props.cue}</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function RestCard({ left, total, onAdjust, onSkip, current, ui, units, cue, look }: { left: number; total: number; onAdjust: (d: number) => void; onSkip: () => void; current: ExercisePerformance; ui: ActiveUI; units: Units; cue: string; look?: string }) {
+  const size = 200;
+  const R = 86;
+  const C = 2 * Math.PI * R;
+  const frac = Math.max(0, Math.min(1, left / Math.max(1, total)));
+  const row = activeRow(current, ui);
+  const working = workingRows(current, ui);
+  const pulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(Animated.sequence([Animated.timing(pulse, { toValue: 1, duration: 1400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }), Animated.timing(pulse, { toValue: 0, duration: 1400, easing: Easing.inOut(Easing.sin), useNativeDriver: true })]));
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+  return (
+    <View style={[{ borderRadius: radius.large, padding: 20, backgroundColor: colors.surfaceOpaque, borderWidth: 1, borderColor: colors.lineSoft, alignItems: "center", gap: 16 }, shadow.soft]}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+        <Ionicons name="timer-outline" size={14} color={colors.lime} />
+        <Label style={{ color: colors.lime }}>REST</Label>
+      </View>
+      <Animated.View style={{ width: size, height: size, alignItems: "center", justifyContent: "center", transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.02] }) }] }}>
+        <Svg width={size} height={size} style={{ position: "absolute", transform: [{ rotate: "-90deg" }] }}>
+          <Circle cx={size / 2} cy={size / 2} r={R} stroke="rgba(255,255,255,0.08)" strokeWidth={8} fill="none" />
+          <Circle cx={size / 2} cy={size / 2} r={R} stroke={colors.lime} strokeWidth={8} fill="none" strokeLinecap="round" strokeDasharray={`${C * frac} ${C}`} />
+        </Svg>
+        <Num size={52} accessibilityLabel={`${left} seconds of rest left`}>{fmtClock(left)}</Num>
+      </Animated.View>
+      <View style={{ flexDirection: "row", gap: 10 }}>
+        <Chip label="−15s" onPress={() => onAdjust(-15)} />
+        <Pressable onPress={onSkip} style={{ height: 36, paddingHorizontal: 22, borderRadius: radius.pill, backgroundColor: colors.lime, alignItems: "center", justifyContent: "center" }} accessibilityRole="button">
+          <Text style={{ color: "#1a1a1a", fontFamily: fonts.semibold }}>Ready</Text>
+        </Pressable>
+        <Chip label="+15s" onPress={() => onAdjust(15)} />
+      </View>
+      <View style={{ alignSelf: "stretch", flexDirection: "row", alignItems: "center", gap: 12, padding: 12, borderRadius: radius.small, backgroundColor: colors.surface }}>
+        <ExerciseThumb uri={current.exercise.imageStartUrl ?? current.exercise.imageEndUrl} name={current.exercise.name} size={44} />
+        <View style={{ flex: 1 }}>
+          <Label>NEXT UP</Label>
+          <Text numberOfLines={1}>{current.exercise.name}</Text>
+          <Text variant="meta" color="tertiary">
+            {row?.warmup ? "Warm-up" : `Set ${working.filter((r) => r.done).length + 1}/${working.length}`}
+            {row?.weightKg != null ? ` · ${fromKg(row.weightKg, units)} ${unitLabel(units)} × ${row.reps ?? "—"}` : ""}
+          </Text>
+        </View>
+      </View>
+      <View style={{ alignSelf: "stretch", flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <KaiOrb size={26} state="rest" look={look} />
+        <Text color="secondary" style={{ flex: 1, fontStyle: "italic" }}>{cue}</Text>
+      </View>
+    </View>
+  );
+}
+
+function SetList({ perf, ui, units, history, onToggle, onDelete }: { perf: ExercisePerformance; ui: ActiveUI; units: Units; history: ExerciseHistory | null; onToggle: (r: SetRow) => void; onDelete: (r: SetRow) => void }) {
+  const u = unitLabel(units);
+  const rows = setRows(perf, ui);
+  const lastSets = history?.history[0]?.sets ?? [];
+  let wi = 0;
+  return (
+    <View style={{ gap: 6 }}>
+      <Label style={{ marginLeft: 4 }}>SETS</Label>
+      {rows.map((r) => {
+        const idx = r.warmup ? -1 : wi++;
+        const prev = idx >= 0 ? lastSets[idx] : undefined;
+        return (
+          <View key={r.n} style={{ padding: 12, borderRadius: radius.small, backgroundColor: r.done ? "rgba(216,255,99,0.08)" : colors.surface, gap: 2 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+              <Text style={{ width: 34, fontFamily: fonts.num, color: r.warmup ? colors.cyan : colors.textTertiary }}>{r.warmup ? "W/U" : `#${idx + 1}`}</Text>
+              <Text style={{ flex: 1, fontFamily: fonts.num, fontSize: 15 }}>
+                {r.weightKg != null ? `${fromKg(r.weightKg, units)} ${u}` : "—"} × {r.amrap && r.reps == null ? "AMRAP" : r.reps ?? "—"}
+                {r.rpe != null ? ` @ ${r.rpe}` : ""}
+              </Text>
+              <Pressable onPress={() => onToggle(r)} hitSlop={6} accessibilityLabel={r.done ? "Mark set not done" : "Mark set done"} style={{ width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", backgroundColor: r.done ? colors.lime : "rgba(255,255,255,0.08)" }}>
+                <Ionicons name="checkmark" size={17} color={r.done ? "#1a1a1a" : colors.textTertiary} />
+              </Pressable>
+              <Pressable onPress={() => onDelete(r)} hitSlop={6} accessibilityLabel="Delete set" style={{ width: 30, height: 34, alignItems: "center", justifyContent: "center" }}>
+                <Ionicons name="close" size={17} color={colors.textTertiary} />
+              </Pressable>
+            </View>
+            {prev && !r.done ? <Text variant="meta" color="tertiary" style={{ marginLeft: 44 }}>Last time: {prev.weightKg != null ? fromKg(prev.weightKg, units) : "BW"} {u} × {prev.reps ?? "—"}</Text> : null}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function SwapSheet({ perf, onClose, onPick, onLibrary }: { perf: ExercisePerformance | null; onClose: () => void; onPick: (s: SwapSuggestion) => void; onLibrary: () => void }) {
   const [items, setItems] = useState<SwapSuggestion[] | null>(null);
   useEffect(() => {
     if (!perf) return;
     setItems(null);
-    api.workouts.swapSuggestions({ exerciseSlug: perf.exercise.slug }).then((r) => setItems(r.recommended.length ? r.recommended : r.all)).catch(() => setItems([]));
+    api.workouts
+      .swapSuggestions({ exerciseSlug: perf.exercise.slug })
+      .then((r) => setItems(r.recommended.length ? r.recommended : r.all))
+      .catch(() => setItems([]));
   }, [perf]);
   return (
-    <Sheet visible={!!perf} onClose={onClose} title={perf ? `Swap ${perf.exercise.name}` : ""}>
-      {items === null ? <Text color="tertiary">Finding alternatives…</Text> : items.length === 0 ? <Text color="secondary">No alternatives found.</Text> : null}
-      {items?.map((s) => (
-        <Pressable key={s.slug} onPress={() => onPick(s.slug)} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.lineSoft, gap: 2 }}>
-          <Text>{s.name}</Text>
-          <Text variant="meta" color="tertiary">{s.rationale ?? s.reasons.join(" · ")}</Text>
+    <Sheet visible={!!perf} onClose={onClose} title="Replace exercise" eyebrow={perf?.exercise.name}>
+      <Text color="secondary">Same primary muscle and movement — sets already logged stay in today's session.</Text>
+      {items === null ? <Text color="tertiary">Finding alternatives…</Text> : items.length === 0 ? <Text color="secondary">No close match — try the library.</Text> : null}
+      {items?.slice(0, 8).map((s) => (
+        <Pressable key={s.slug} onPress={() => onPick(s)} style={({ pressed }) => ({ flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 8, opacity: pressed ? 0.6 : 1 })}>
+          <ExerciseThumb uri={(s as SwapSuggestion & { imageStartUrl?: string | null }).imageStartUrl} name={s.name} size={40} />
+          <View style={{ flex: 1 }}>
+            <Text numberOfLines={1}>{s.name}</Text>
+            <Text variant="meta" color="tertiary" numberOfLines={2}>{s.rationale ?? s.reasons.join(" · ")}</Text>
+          </View>
+          <Ionicons name="swap-horizontal" size={18} color={colors.textSecondary} />
         </Pressable>
       ))}
+      <Button label="Browse full library" variant="ghost" onPress={onLibrary} />
     </Sheet>
   );
 }
 
-function PlateSheet({ total, units, onClose }: { total: number | null; units: Units; onClose: () => void }) {
-  const u = units === "metric" ? "kg" : "lb";
-  const [bar, setBar] = useState(units === "metric" ? 20 : 45);
-  const res = total ? plateCombo(total, bar, u) : null;
+function SummaryView({ summary, units, look, savedTpl, onSaveTpl, onRepeat, onDone, onProgress }: { summary: Summary; units: Units; look?: string; savedTpl: boolean; onSaveTpl: () => void; onRepeat: () => void; onDone: () => void; onProgress: () => void }) {
+  const u = unitLabel(units);
+  const pop = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.spring(pop, { toValue: 1, useNativeDriver: true, stiffness: 220, damping: 20 }).start();
+  }, [pop]);
+  const s = summary;
+  const dv = s.vsLast ? Math.round(fromKg(s.vsLast.volumeKg, units)) : 0;
   return (
-    <Sheet visible={total != null} onClose={onClose} title="Plate calculator">
-      <Text color="secondary">Target {total} {u}</Text>
-      <View style={{ flexDirection: "row", gap: 8 }}>
-        {(units === "metric" ? [15, 20] : [35, 45]).map((b) => <Chip key={b} label={`${b} ${u} bar`} active={bar === b} onPress={() => setBar(b)} />)}
-      </View>
-      {res ? (
-        <>
-          <Num size={26}>{plateLabel(res.perSide)}</Num>
-          <Text variant="meta" color="tertiary">Per side · loaded {res.loaded} {u}{res.remainder ? ` · ${res.remainder} ${u} left over` : ""}</Text>
-        </>
-      ) : null}
-    </Sheet>
+    <Screen>
+      <Animated.View style={{ gap: 14, opacity: pop, transform: [{ translateY: pop.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }] }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 14, marginTop: 8 }}>
+          <KaiOrb size={44} state="happy" look={look} />
+          <View style={{ flex: 1 }}>
+            <Label style={{ color: colors.lime }}>WORKOUT COMPLETE</Label>
+            <Text variant="title" numberOfLines={2}>{s.session.name}</Text>
+          </View>
+        </View>
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          {[["Time", fmtDuration(s.durationSec)], ["Volume", `${Math.round(fromKg(s.volumeKg, units)).toLocaleString()}`], ["Sets", String(s.sets)]].map(([l, v]) => (
+            <View key={l} style={{ flex: 1, padding: 14, borderRadius: radius.medium, backgroundColor: colors.surface, gap: 6 }}>
+              <Num size={22}>{v}</Num>
+              <Label>{l === "Volume" ? `VOLUME · ${u.toUpperCase()}` : l.toUpperCase()}</Label>
+            </View>
+          ))}
+        </View>
+        {s.coins > 0 ? (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, padding: 12, borderRadius: radius.medium, backgroundColor: "rgba(255,182,97,0.12)" }}>
+            <Ionicons name="logo-bitcoin" size={16} color={colors.amber} />
+            <Num size={16} style={{ color: colors.amber }}>+{s.coins}</Num>
+            <Text color="secondary">earned this session</Text>
+          </View>
+        ) : null}
+        {s.prs.length ? (
+          <View style={{ padding: 14, borderRadius: radius.medium, backgroundColor: "rgba(216,255,99,0.08)", gap: 6 }}>
+            <Text style={{ fontFamily: fonts.semibold, color: colors.lime }}>{s.prs.length} personal record{s.prs.length > 1 ? "s" : ""}</Text>
+            {s.prs.map((p) => <Text key={p} color="secondary">· {p}</Text>)}
+          </View>
+        ) : null}
+        {s.muscles.length ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>{s.muscles.map((m) => <View key={m} style={{ paddingHorizontal: 10, height: 28, borderRadius: radius.pill, backgroundColor: "rgba(213,26,122,0.16)", justifyContent: "center" }}><Text variant="meta" style={{ color: colors.pinkSoft }}>{m.toLowerCase()}</Text></View>)}</View> : null}
+        {s.vsLast ? (
+          <Text color="secondary">
+            vs last time: <Text style={{ color: dv >= 0 ? colors.lime : colors.amber }}>{dv >= 0 ? "+" : ""}{dv.toLocaleString()} {u} volume</Text> · {s.vsLast.durationSec >= 0 ? "+" : ""}{Math.round(s.vsLast.durationSec / 60)} min
+          </Text>
+        ) : null}
+        {s.protein ? (
+          <View style={{ flexDirection: "row", gap: 8, padding: 12, borderRadius: radius.medium, backgroundColor: colors.surface, alignItems: "center" }}>
+            <Ionicons name="flash" size={15} color={colors.cyan} />
+            <Text color="secondary" style={{ flex: 1 }}>Protein today: <Text>{s.protein.eaten}g</Text> of <Text>{s.protein.target}g</Text> — log a meal to hit your goal.</Text>
+          </View>
+        ) : null}
+        {s.session.trainerComment ? <View style={{ padding: 14, borderRadius: radius.medium, backgroundColor: colors.surface, gap: 6 }}><Label>FROM YOUR TRAINER</Label><Text color="secondary">{s.session.trainerComment}</Text></View> : <Text color="secondary" style={{ fontStyle: "italic" }}>"{trainerCue("finish")}"</Text>}
+        {s.session.progression?.nextUnlock ? <View style={{ padding: 14, borderRadius: radius.medium, backgroundColor: colors.surface, gap: 6 }}><Label>NEXT UNLOCK</Label><Text color="secondary">{s.session.progression.nextUnlock.requirement}</Text></View> : null}
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <View style={{ flex: 1 }}><Button label="Done" onPress={onDone} /></View>
+          <View style={{ flex: 1 }}><Button label="Progress" variant="ghost" onPress={onProgress} /></View>
+        </View>
+        <View style={{ flexDirection: "row", justifyContent: "center", gap: 24 }}>
+          <Pressable onPress={onRepeat} hitSlop={8}><Text color="secondary">Repeat workout</Text></Pressable>
+          <Pressable onPress={onSaveTpl} disabled={savedTpl} hitSlop={8}><Text color={savedTpl ? "tertiary" : "secondary"}>{savedTpl ? "Saved ✓" : "Save as template"}</Text></Pressable>
+        </View>
+      </Animated.View>
+    </Screen>
   );
 }

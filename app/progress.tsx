@@ -1,16 +1,19 @@
 import { useMemo, useState } from "react";
-import { TextInput, View } from "react-native";
+import { Pressable, TextInput, View } from "react-native";
+import { useRouter } from "expo-router";
 import { api } from "@/api/client";
-import { invalidateResource, useConsistency, useProgressOverview, useReadiness, useResource } from "@/api/hooks";
+import { errorMessage, invalidateResource, useConsistency, useMuscleMap, useProgressOverview, useReadiness, useResource } from "@/api/hooks";
 import { useAuth } from "@/auth/auth-provider";
-import type { BodyMeasurement, PersonalRecord, RecoveryCheckinInput } from "@/api/types";
-import { fromKg, unitLabel } from "@/lib/workouts";
+import type { BodyMeasurement, PersonalRecord } from "@/api/types";
+import { CheckinSheet, useCheckins, useTodayCheckin } from "@/components/checkin";
+import { toast } from "@/components/ui/toast";
+import { fromKg, toKg, unitLabel } from "@/lib/workouts";
 import { useTheme } from "@/theme/theme-provider";
 import { gated } from "@/components/feature-gate";
 import { colors, fonts } from "@/theme/tokens";
 import { Screen } from "@/components/ui/screen";
 import { Button, Chip, ProgressBar, SectionHeading } from "@/components/ui/controls";
-import { AreaChart, Card, Dial, EmptyState, MiniBars, PageHeader, PageSkeleton, Segmented, Sparkline } from "@/components/ui/extra";
+import { AreaChart, Card, Dial, EmptyState, MiniBars, PageHeader, PageSkeleton, PillTabs, ScrubChart, Segmented, Sheet, Sparkline } from "@/components/ui/extra";
 import { Label, Num, Text } from "@/components/ui/text";
 
 const RANGES = [
@@ -19,30 +22,20 @@ const RANGES = [
   { value: "26", label: "26w" },
 ] as const;
 
-function Scale({ label, value, onChange }: { label: string; value: number; onChange: (n: number) => void }) {
-  return (
-    <View style={{ gap: 6 }}>
-      <Label>{label}</Label>
-      <View style={{ flexDirection: "row", gap: 6 }}>
-        {[1, 2, 3, 4, 5].map((n) => <Chip key={n} label={String(n)} active={value === n} onPress={() => onChange(n)} />)}
-      </View>
-    </View>
-  );
-}
-
 function CheckinCard() {
   const readiness = useReadiness();
+  const today = useTodayCheckin();
+  const checkins = useCheckins();
   const [open, setOpen] = useState(false);
-  const [f, setF] = useState<RecoveryCheckinInput>({ sleepQuality: 3, fatigue: 3, soreness: 3 });
-  const [sleep, setSleep] = useState("7.5");
-  const [busy, setBusy] = useState(false);
   const r = readiness.data;
+  const sleep = [...(checkins.data ?? [])].sort((x, y) => Date.parse(x.recordedAt) - Date.parse(y.recordedAt)).slice(-14).map((c) => c.sleepH ?? 0).filter(Boolean);
   return (
     <Card title="Recovery">
       <View style={{ flexDirection: "row", alignItems: "center", gap: 16 }}>
         <Dial pct={r?.score ?? 0} size={104} tone="pink"><Num size={26}>{r ? r.score : "—"}</Num></Dial>
-        <View style={{ flex: 1, gap: 8 }}>
+        <View style={{ flex: 1, gap: 6 }}>
           <Text color="secondary">{r?.recommendation ?? "Log a check-in to score your readiness."}</Text>
+          {today.latest ? <Text variant="meta" color="tertiary">{today.latest.sleepH ?? "—"}h sleep · quality {today.latest.sleepQuality ?? "—"}/5 · fatigue {today.latest.fatigue ?? "—"}/5 · soreness {today.latest.soreness ?? "—"}/5</Text> : null}
         </View>
       </View>
       {r?.factors?.map((x) => (
@@ -51,33 +44,21 @@ function CheckinCard() {
           <ProgressBar pct={x.fraction * 100} tone="cyan" height={5} />
         </View>
       ))}
+      {sleep.length >= 2 ? <View style={{ marginTop: 12 }}><Label>SLEEP · LAST {sleep.length} CHECK-INS</Label><ScrubChart data={sleep} unit="h" color={colors.cyan} height={80} /></View> : null}
       <View style={{ marginTop: 14 }}>
-        {open ? (
-          <View style={{ gap: 12 }}>
-            <View style={{ gap: 6 }}>
-              <Label>SLEEP (HOURS)</Label>
-              <TextInput value={sleep} onChangeText={setSleep} keyboardType="decimal-pad" style={{ height: 46, borderRadius: 14, backgroundColor: colors.surfaceRecessed, color: colors.textPrimary, paddingHorizontal: 14, fontFamily: fonts.num, fontSize: 16 }} />
-            </View>
-            <Scale label="SLEEP QUALITY" value={f.sleepQuality ?? 3} onChange={(n) => setF({ ...f, sleepQuality: n })} />
-            <Scale label="FATIGUE" value={f.fatigue ?? 3} onChange={(n) => setF({ ...f, fatigue: n })} />
-            <Scale label="SORENESS" value={f.soreness ?? 3} onChange={(n) => setF({ ...f, soreness: n })} />
-            <Button label="Save check-in" loading={busy} onPress={async () => {
-              setBusy(true);
-              try {
-                const res = await api.progress.checkin({ ...f, sleepH: parseFloat(sleep) || undefined });
-                readiness.mutate(res.readiness);
-                invalidateResource("dashboard");
-                setOpen(false);
-              } finally { setBusy(false); }
-            }} />
-          </View>
-        ) : (
-          <Button label="Daily check-in" variant="ghost" onPress={() => setOpen(true)} />
-        )}
+        <Button label={today.done ? "Update check-in" : "Daily check-in"} variant="ghost" onPress={() => setOpen(true)} />
       </View>
+      <CheckinSheet visible={open} onClose={() => setOpen(false)} seed={today.latest} onSaved={(nr) => { readiness.mutate(nr); today.refetch(); checkins.refetch(); }} />
     </Card>
   );
 }
+
+const STRENGTH_RANGES = [
+  { value: "30", label: "1M" },
+  { value: "91", label: "3M" },
+  { value: "182", label: "6M" },
+  { value: "365", label: "1Y" },
+] as const;
 
 function ProgressScreen() {
   useTheme();
@@ -93,6 +74,10 @@ function ProgressScreen() {
   const corr = useResource("nutrition-corr", () => api.progress.nutritionCorrelation());
   const meas = useResource<BodyMeasurement[]>("measurements", () => api.progress.measurements());
   const [lift, setLift] = useState<string | null>(null);
+  const [days, setDays] = useState<"30" | "91" | "182" | "365">("182");
+  const muscles = useMuscleMap("month");
+  const router = useRouter();
+  const [measureOpen, setMeasureOpen] = useState(false);
 
   const liftOptions = useMemo(() => {
     const seen = new Map<string, string>();
@@ -100,7 +85,7 @@ function ProgressScreen() {
     return [...seen.entries()];
   }, [prs.data]);
   const slug = lift ?? liftOptions[0]?.[0] ?? null;
-  const strength = useResource(`strength:${slug}`, () => (slug ? api.progress.strength(slug, 180) : Promise.resolve(null)));
+  const strength = useResource(`strength:${slug}:${days}`, () => (slug ? api.progress.strength(slug, Number(days)) : Promise.resolve(null)));
 
   if (overview.initialLoading && cons.initialLoading) return <Screen><PageHeader title="Progress" /><PageSkeleton /></Screen>;
   const c = cons.data;
@@ -114,7 +99,7 @@ function ProgressScreen() {
       <View style={{ flexDirection: "row", gap: 10, marginBottom: 14 }}>
         {[
           { l: "SESSIONS", v: String(overview.data?.sessions ?? 0) },
-          { l: `VOLUME (${u})`, v: `${Math.round(fromKg(overview.data?.totalVolumeKg ?? 0, units) / 1000)}k` },
+          { l: `VOLUME (${u})`, v: (() => { const v = fromKg(overview.data?.totalVolumeKg ?? 0, units); return v >= 1000 ? `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k` : String(Math.round(v)); })() },
           { l: "PRS", v: String(overview.data?.personalRecords ?? 0) },
         ].map((s) => (
           <Card key={s.l} style={{ flex: 1, marginBottom: 0, padding: 14 }}><Label>{s.l}</Label><Num size={24} style={{ marginTop: 6 }}>{s.v}</Num></Card>
@@ -146,15 +131,47 @@ function ProgressScreen() {
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
               {liftOptions.slice(0, 8).map(([s, n]) => <Chip key={s} label={n} active={slug === s} onPress={() => setLift(s)} />)}
             </View>
-            {strength.data?.series.length ? (
+            <PillTabs value={days} onChange={setDays} options={STRENGTH_RANGES.map((r) => ({ value: r.value, label: r.label }))} />
+            {strength.data && strength.data.series.length >= 2 ? (
               <>
-                <AreaChart series={[{ color: colors.pink, data: strength.data.series.map((p) => fromKg(p.e1rm, units)) }]} height={140} />
-                <Text variant="meta" color="tertiary">Estimated 1RM ({u}) · latest {fromKg(strength.data.series.at(-1)!.e1rm, units)}</Text>
+                <ScrubChart data={strength.data.series.map((p) => fromKg(p.e1rm, units))} labels={strength.data.series.map((p) => new Date(p.date).toLocaleDateString(undefined, { month: "short", day: "numeric" }))} unit={u} height={150} />
+                <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
+                  <Num size={28}>{fromKg(strength.data.series.at(-1)!.e1rm, units)}</Num>
+                  <Text color="tertiary">{u} est. 1RM</Text>
+                  {(() => { const d0 = fromKg(strength.data!.series.at(-1)!.e1rm - strength.data!.series[0].e1rm, units); return <Text variant="meta" style={{ marginLeft: "auto", color: d0 >= 0 ? colors.lime : colors.amber }}>{d0 >= 0 ? "+" : ""}{Math.round(d0 * 10) / 10} {u} over {STRENGTH_RANGES.find((r) => r.value === days)?.label}</Text>; })()}
+                </View>
+                <Text variant="meta" color="tertiary">Drag across the chart to read a point. Epley formula.</Text>
               </>
-            ) : <Text color="tertiary">No data for this lift yet.</Text>}
+            ) : <Text color="tertiary">Need at least two sessions with this lift in this range.</Text>}
           </View>
         )}
       </Card>
+
+      <Card title="Personal records">
+        {(prs.data ?? []).length === 0 ? <Text color="secondary">Beat a previous best on any lift and it lands here automatically.</Text> : (
+          <>
+            {[...(prs.data ?? [])].filter((p) => p.recordType === "max_1rm_estimate" || p.recordType === "max_weight").sort((a, b) => Date.parse(b.achievedAt) - Date.parse(a.achievedAt)).slice(0, 6).map((p) => (
+              <View key={p.id} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.lineSoft, gap: 10 }}>
+                <View style={{ flex: 1 }}><Text numberOfLines={1}>{p.exercise?.name ?? "Lift"}</Text><Text variant="meta" color="tertiary">{p.recordType === "max_weight" ? "Heaviest set" : "Est. 1RM"} · {new Date(p.achievedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</Text></View>
+                <Num size={16} style={{ color: colors.lime }}>{Math.round(fromKg(p.value, units))} {u}</Num>
+              </View>
+            ))}
+            <Pressable onPress={() => router.push("/records")} style={{ paddingTop: 10 }}><Text variant="meta" color="pink">View all records →</Text></Pressable>
+          </>
+        )}
+      </Card>
+
+      {(muscles.data?.muscles ?? []).some((m) => m.score > 0) ? (
+        <Card title="Volume by muscle · 30 days">
+          {[...(muscles.data?.muscles ?? [])].filter((m) => m.score > 0).sort((a, b) => b.score - a.score).slice(0, 8).map((m) => (
+            <View key={m.key} style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 5 }}>
+              <Text variant="meta" color="secondary" style={{ width: 96 }} numberOfLines={1}>{m.name}</Text>
+              <View style={{ flex: 1 }}><ProgressBar pct={m.score * 100} tone="mauve" height={7} /></View>
+              <Num size={12} color="tertiary" style={{ width: 36, textAlign: "right" }}>{Math.round(m.score * 100)}%</Num>
+            </View>
+          ))}
+        </Card>
+      ) : null}
 
       {load.data ? (
         <Card title="Training load">
@@ -172,23 +189,95 @@ function ProgressScreen() {
         <Card title="Patterns">
           {patterns.data.insight ? <Text color="secondary">{patterns.data.insight}</Text> : null}
           {patterns.data.bestDay ? <Text variant="meta" color="tertiary" style={{ marginTop: 6 }}>Best day: {patterns.data.bestDay}{patterns.data.bestTimeWindow ? ` · ${patterns.data.bestTimeWindow}` : ""}</Text> : null}
+          {patterns.data.circadian.filter((b) => b.sessions >= 3).map((b) => (
+            <View key={b.label} style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 }}>
+              <Text variant="meta" color="secondary">{b.label} · {b.sessions} sessions</Text>
+              <Text variant="meta" style={{ color: b.relativePerformance >= 0 ? colors.lime : colors.amber }}>{b.relativePerformance > 0 ? "+" : ""}{b.relativePerformance}% vol</Text>
+            </View>
+          ))}
         </Card>
       ) : null}
 
       {corr.data && !corr.data.insufficient_data ? (
-        <Card title="Nutrition ↔ strength"><Text color="secondary">{corr.data.interpretation}</Text></Card>
+        <Card title="Protein vs. volume">
+          <Text color="secondary">Correlation {corr.data.correlation} — {corr.data.interpretation}</Text>
+          {corr.data.weeks.length >= 3 ? (
+            <View style={{ marginTop: 10, gap: 4 }}>
+              <MiniBars data={corr.data.weeks.slice(-8).map((w) => w.totalVolumeKg)} tone="cyan" height={48} />
+              <Text variant="meta" color="tertiary">Weekly volume · avg protein {Math.round(corr.data.weeks.slice(-8).reduce((n, w) => n + w.avgProteinG, 0) / Math.min(8, corr.data.weeks.length))} g/day</Text>
+            </View>
+          ) : null}
+        </Card>
       ) : null}
 
-      <SectionHeading title="Body measurements" />
+      <SectionHeading title="Body measurements" action="+ Log" onAction={() => setMeasureOpen(true)} />
       <Card>
-        {(meas.data ?? []).length === 0 ? <Text color="secondary">No measurements yet. Log your weight in the training profile.</Text> : (
-          <>
-            <Sparkline data={[...(meas.data ?? [])].filter((m) => m.weightKg).map((m) => fromKg(m.weightKg!, units))} width={280} height={50} />
-            <Text variant="meta" color="tertiary">Bodyweight trend ({u})</Text>
-          </>
-        )}
+        {(meas.data ?? []).length === 0 ? (
+          <View style={{ gap: 10 }}>
+            <Text color="secondary">No measurements yet. Log your weight and a few tape measurements to see trends.</Text>
+            <Button label="Log a measurement" variant="ghost" onPress={() => setMeasureOpen(true)} />
+          </View>
+        ) : (() => {
+          const sorted = [...(meas.data ?? [])].sort((a, b) => Date.parse(a.recordedAt ?? "") - Date.parse(b.recordedAt ?? ""));
+          const w = sorted.filter((m) => m.weightKg).map((m) => fromKg(m.weightKg!, units));
+          const last = sorted[sorted.length - 1];
+          return (
+            <View style={{ gap: 10 }}>
+              {w.length >= 2 ? <ScrubChart data={w} unit={u} height={110} /> : null}
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14 }}>
+                {last?.weightKg ? <View><Num size={20}>{fromKg(last.weightKg, units)}</Num><Label>WEIGHT {u.toUpperCase()}</Label></View> : null}
+                {last?.bodyFatPct ? <View><Num size={20}>{last.bodyFatPct}%</Num><Label>BODY FAT</Label></View> : null}
+                {last?.waistCm ? <View><Num size={20}>{units === "metric" ? last.waistCm : Math.round((last.waistCm / 2.54) * 10) / 10}</Num><Label>WAIST {units === "metric" ? "CM" : "IN"}</Label></View> : null}
+              </View>
+              {last?.recordedAt ? <Text variant="meta" color="tertiary">Last logged {new Date(last.recordedAt).toLocaleDateString()}</Text> : null}
+            </View>
+          );
+        })()}
       </Card>
+      <MeasureSheet visible={measureOpen} units={units} onClose={() => setMeasureOpen(false)} onSaved={() => { setMeasureOpen(false); meas.refetch(); }} />
     </Screen>
+  );
+}
+
+function MeasureSheet({ visible, units, onClose, onSaved }: { visible: boolean; units: "metric" | "imperial"; onClose: () => void; onSaved: () => void }) {
+  const metric = units === "metric";
+  const [v, setV] = useState({ weight: "", bodyFat: "", waist: "", chest: "", arm: "" });
+  const [busy, setBusy] = useState(false);
+  const n = (s: string) => { const x = parseFloat(s.replace(",", ".")); return Number.isFinite(x) && x > 0 ? x : undefined; };
+  const cm = (s: string) => { const x = n(s); return x == null ? undefined : metric ? x : Math.round(x * 2.54 * 10) / 10; };
+  const any = Object.values(v).some((x) => n(x) != null);
+  const save = async () => {
+    setBusy(true);
+    try {
+      const w = n(v.weight);
+      await api.progress.addMeasurement({ weightKg: w != null ? toKg(w, units) : undefined, bodyFatPct: n(v.bodyFat), waistCm: cm(v.waist), chestCm: cm(v.chest), armCm: cm(v.arm) });
+      if (w != null) await api.me.update({ weightKg: toKg(w, units) }).catch(() => {});
+      invalidateResource("measurements");
+      toast.success("Measurement logged");
+      setV({ weight: "", bodyFat: "", waist: "", chest: "", arm: "" });
+      onSaved();
+    } catch (e) {
+      toast.error(errorMessage(e as Error));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const row = (key: keyof typeof v, label: string, unit: string) => (
+    <View key={key} style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+      <Text style={{ flex: 1 }}>{label}</Text>
+      <TextInput value={v[key]} onChangeText={(t) => setV((s) => ({ ...s, [key]: t }))} keyboardType="decimal-pad" placeholder="—" placeholderTextColor={colors.textTertiary} style={{ width: 96, height: 44, borderRadius: 14, backgroundColor: colors.surfaceRecessed, paddingHorizontal: 12, color: colors.textPrimary, fontFamily: fonts.num, fontSize: 16, textAlign: "right" }} />
+      <Text color="tertiary" style={{ width: 28 }}>{unit}</Text>
+    </View>
+  );
+  return (
+    <Sheet visible={visible} onClose={onClose} title="Log measurement" eyebrow="Body" footer={<Button label="Save" variant="accent" loading={busy} disabled={!any} onPress={save} />}>
+      <Text variant="meta" color="tertiary">Fill in whatever you measured today — everything is optional.</Text>
+      {row("weight", "Bodyweight", metric ? "kg" : "lb")}
+      {row("bodyFat", "Body fat", "%")}
+      {row("waist", "Waist", metric ? "cm" : "in")}
+      {row("chest", "Chest", metric ? "cm" : "in")}
+      {row("arm", "Arm", metric ? "cm" : "in")}
+    </Sheet>
   );
 }
 

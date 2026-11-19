@@ -1,4 +1,5 @@
-import { Pressable, View } from "react-native";
+import { Alert, Pressable, View } from "react-native";
+import { useNotifications, useWallet } from "@/api/hooks";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useProgression } from "@/api/settings";
@@ -10,7 +11,7 @@ import { colors } from "@/theme/tokens";
 import { Screen } from "@/components/ui/screen";
 import { Button, SectionHeading } from "@/components/ui/controls";
 import { Card, SettingRow } from "@/components/ui/extra";
-import { Label, Text } from "@/components/ui/text";
+import { Label, Num, Text } from "@/components/ui/text";
 
 type Item = { to: string; label: string; hint: string; icon: keyof typeof Ionicons.glyphMap; feature?: FeatureKey };
 
@@ -31,6 +32,14 @@ export default function More() {
   const prog = useProgression();
   const cz = useCustomization();
   const locked = (i: Item) => (i.feature ? !prog.has(i.feature) : false);
+  const wallet = useWallet();
+  const notes = useNotifications();
+  const unread = notes.data?.unreadCount ?? 0;
+  const confirmSignOut = () =>
+    Alert.alert("Sign out?", "You'll need your email and password to sign back in.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Sign out", style: "destructive", onPress: () => void signOut() },
+    ]);
 
   return (
     <Screen tabs>
@@ -43,6 +52,16 @@ export default function More() {
           <Text variant="meta" color="tertiary" style={{ marginTop: 6 }}>Theme · {THEME_MAP[cz.equipped.theme]?.name ?? "Default"}</Text>
         </Card>
       </Pressable>
+      <Pressable onPress={() => (prog.has("store") ? router.push("/store") : undefined)} disabled={!prog.has("store")}>
+        <Card style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+          <Ionicons name="logo-bitcoin" size={22} color={colors.amber} />
+          <View style={{ flex: 1 }}>
+            <Num size={20}>{(wallet.data?.balance ?? 0).toLocaleString()}</Num>
+            <Text variant="meta" color="tertiary">coins · +{wallet.data?.earnedThisWeek ?? 0} this week</Text>
+          </View>
+          {prog.has("store") ? <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} /> : <Text variant="meta" color="tertiary">Store unlocks as you train</Text>}
+        </Card>
+      </Pressable>
 
       <SectionHeading title="Explore" />
       <Card>
@@ -52,7 +71,7 @@ export default function More() {
             icon={i.icon}
             title={i.label}
             hint={locked(i) ? "Locked — unlocks as you train" : i.hint}
-            right={locked(i) ? <Ionicons name="lock-closed" size={15} color={colors.textTertiary} /> : undefined}
+            right={locked(i) ? <Ionicons name="lock-closed" size={15} color={colors.textTertiary} /> : i.to === "/notifications" && unread ? <View style={{ minWidth: 22, height: 22, borderRadius: 11, backgroundColor: colors.pink, alignItems: "center", justifyContent: "center", paddingHorizontal: 6 }}><Text style={{ color: "#fff", fontSize: 12 }}>{unread > 99 ? "99+" : unread}</Text></View> : undefined}
             onPress={locked(i) ? undefined : () => router.push(i.to as never)}
             last={idx === ITEMS.length - 1}
           />
@@ -64,7 +83,7 @@ export default function More() {
         <SettingRow icon="settings-outline" title="Settings" hint="Profile, appearance, privacy" onPress={() => router.push("/settings")} />
         <SettingRow icon="refresh-outline" title="Redo setup" hint="Run onboarding again" onPress={() => router.push("/onboarding")} last />
       </Card>
-      <View style={{ marginTop: 6 }}><Button label="Sign out" variant="ghost" onPress={signOut} /></View>
+      <View style={{ marginTop: 6 }}><Button label="Sign out" variant="ghost" onPress={confirmSignOut} /></View>
     </Screen>
   );
 }

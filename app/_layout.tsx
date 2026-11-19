@@ -1,6 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { LogBox } from "react-native";
 import { Stack, useRouter, useSegments } from "expo-router";
+import { DefaultTheme, ThemeProvider as NavThemeProvider } from "expo-router/react-navigation";
 import { StatusBar } from "expo-status-bar";
 import * as SplashScreen from "expo-splash-screen";
 import { useFonts } from "expo-font";
@@ -17,8 +18,17 @@ import {
 import { SpaceGrotesk_400Regular, SpaceGrotesk_500Medium, SpaceGrotesk_700Bold } from "@expo-google-fonts/space-grotesk";
 import { AuthProvider, useAuth } from "@/auth/auth-provider";
 import { colors } from "@/theme/tokens";
-import { SettingsProvider, useAppearance } from "@/api/settings";
-import { ThemeProvider } from "@/theme/theme-provider";
+import { Atmosphere } from "@/components/ui/atmosphere";
+import { SettingsProvider, useAppearance, usePrefs } from "@/api/settings";
+import { ThemeProvider, useCustomization } from "@/theme/theme-provider";
+import { ToastHost } from "@/components/ui/toast";
+import { OfflineBanner } from "@/components/offline-banner";
+import { configureNotifications, onNotificationTap, syncWorkoutReminders } from "@/lib/reminders";
+import { loadDevicePrefs } from "@/lib/device-prefs";
+import { grantDailyBonus } from "@/lib/rewards";
+import { motion } from "@/lib/motion";
+import { EASE_LUXURY } from "@/lib/ease";
+import Animated, { useAnimatedStyle, useSharedValue, withSequence, withTiming } from "react-native-reanimated";
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 // Dev-only noise from the custom tab bar re-registering routes on first auth.
@@ -29,10 +39,31 @@ const queryClient = new QueryClient({
 });
 
 /** Mirrors the website's RequireAuth / RedirectIfAuthed. */
+configureNotifications();
+
 function AuthGate() {
   const { status, user } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+  const prefs = usePrefs();
+  const ready = status === "authed" && !!user?.onboardingCompletedAt;
+
+  // daily check-in coins (idempotent per day) + notification taps → route
+  useEffect(() => {
+    if (!ready) return;
+    const t = setTimeout(() => void grantDailyBonus(), 1200);
+    const off = onNotificationTap((url) => router.push(url as never));
+    return () => {
+      clearTimeout(t);
+      off();
+    };
+  }, [ready, router]);
+
+  // keep scheduled workout reminders in line with the preference
+  useEffect(() => {
+    if (!ready) return;
+    void loadDevicePrefs().then((d) => syncWorkoutReminders({ enabled: prefs.notifications.workoutReminders, days: d.preferredDays, hour: d.reminderHour, minute: d.reminderMinute }));
+  }, [ready, prefs.notifications.workoutReminders]);
 
   useEffect(() => {
     if (status === "loading") return;
@@ -41,11 +72,11 @@ function AuthGate() {
     if (status === "anon" && !inAuth) router.replace("/login");
     else if (status === "unverified" && (segments as string[])[1] !== "verify-email") router.replace("/verify-email");
     else if (status === "authed" && !user?.onboardingCompletedAt && group !== "onboarding") router.replace("/onboarding");
-    else if (status === "authed" && inAuth) router.replace("/dashboard");
+    else if (status === "authed" && inAuth && (segments as string[])[1] !== "reset-password") router.replace("/dashboard");
   }, [status, user, segments, router]);
 
   return (
-    <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background }, animation: "fade" }}>
+    <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "transparent" }, animation: "fade", animationDuration: 280 }}>
       <Stack.Screen name="(auth)" />
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="onboarding" options={{ gestureEnabled: false }} />
@@ -63,12 +94,46 @@ function Providers() {
   );
 }
 
+/** Dark text on light themes, light text on dark ones. */
+function ThemedStatusBar() {
+  const { mode } = useCustomization();
+  return <StatusBar style={mode === "light" ? "dark" : "light"} />;
+}
+
+/** A soft dip-and-return on the whole UI when the theme changes, so the swap reads as intentional. */
+/** Navigation paints its own opaque scene colour; make it transparent so the root Atmosphere shows through. */
+const NAV_THEME = { ...DefaultTheme, colors: { ...DefaultTheme.colors, background: "transparent", card: "transparent", border: "transparent" } };
+
+function ThemeSwap({ children }: { children: ReactNode }) {
+  const { version } = useCustomization();
+  const o = useSharedValue(1);
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    if (motion.reduced) return;
+    o.value = withSequence(withTiming(0.88, { duration: 120 }), withTiming(1, { duration: 520, easing: EASE_LUXURY }));
+  }, [version, o]);
+  const style = useAnimatedStyle(() => ({ opacity: o.value }));
+  return <Animated.View style={[{ flex: 1 }, style]}>{children}</Animated.View>;
+}
+
 function ThemedShell({ authKey }: { authKey: string }) {
   const appearance = useAppearance();
+  motion.setAppSetting(appearance.reduceMotion);
   return (
     <ThemeProvider authKey={authKey} reduceMotion={appearance.reduceMotion}>
-      <StatusBar style="light" />
-      <AuthGate />
+      <Atmosphere />
+      <ThemedStatusBar />
+      <NavThemeProvider value={NAV_THEME}>
+        <ThemeSwap>
+          <AuthGate />
+        </ThemeSwap>
+      </NavThemeProvider>
+      <OfflineBanner />
+      <ToastHost />
     </ThemeProvider>
   );
 }
@@ -92,7 +157,7 @@ export default function RootLayout() {
   if (!loaded) return null;
 
   return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.background }}>
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <QueryClientProvider client={queryClient}>
           <AuthProvider>

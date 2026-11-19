@@ -28,3 +28,9 @@ export function mapAuthError(error: unknown): string {
   }
   return error instanceof Error ? error.message : "Something went wrong.";
 }
+
+/** Accept a raw token or any pasted URL containing ?token=… (reset / verify links). */
+export const extractToken = (s: string) => {
+  const m = s.match(/[?&]token=([^&\s]+)/);
+  return decodeURIComponent((m ? m[1] : s).trim());
+};

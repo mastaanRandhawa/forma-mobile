@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { auth as authClient, session as tokenStore } from "@/api/client";
+import { invalidateResource } from "@/api/hooks";
+import { setRewardsUser } from "@/lib/rewards";
 import type { User } from "@/api/types";
 
 export type AuthStatus = "loading" | "authed" | "unverified" | "anon";
@@ -22,7 +24,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUserState] = useState<User | null>(null);
 
   const setUser = useCallback((u: User | null) => {
-    setUserState(u);
+    setUserState((prev) => {
+      // a different (or no) account: drop every cached screen so nothing leaks across users
+      if (prev?.id !== u?.id) invalidateResource();
+      return u;
+    });
+    setRewardsUser(u?.id ?? null);
     setStatus(statusFor(u));
   }, []);
 

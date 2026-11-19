@@ -33,6 +33,8 @@ export interface TemplateExercise {
   warmup?: boolean;
   /** exercises sharing a group value are performed back-to-back as a superset */
   supersetGroup?: number;
+  /** backend exercise id when known (picked from the library) — skips name matching */
+  exerciseId?: string;
 }
 
 export interface WorkoutTemplate {

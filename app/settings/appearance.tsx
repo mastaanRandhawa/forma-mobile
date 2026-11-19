@@ -9,6 +9,8 @@ import { colors, radius } from "@/theme/tokens";
 import { Screen } from "@/components/ui/screen";
 import { Card, PageHeader, SettingRow, Toggle } from "@/components/ui/extra";
 import { Text } from "@/components/ui/text";
+import { setDevicePrefs, useDevicePrefs } from "@/lib/device-prefs";
+import { Segmented } from "@/components/ui/extra";
 
 const MODES = [
   { id: "cm-light", label: "Light", icon: "sunny-outline" },
@@ -24,6 +26,8 @@ export default function AppearanceSettings() {
   const cz = useCustomization();
   const theme = THEME_MAP[cz.equipped.theme];
   const mode = cz.equipped.colorMode ?? "cm-system";
+  const devicePrefs = useDevicePrefs();
+  const navMode = devicePrefs.navMode ?? "auto";
   return (
     <Screen>
       <PageHeader title="Appearance" />
@@ -52,6 +56,10 @@ export default function AppearanceSettings() {
             <Ionicons name="arrow-forward" size={18} color="#fff" />
           </LinearGradient>
         </Pressable>
+      </Card>
+      <Card title="Navigation bar">
+        <Text color="secondary" style={{ marginBottom: 12 }}>The tab bar can shrink to a compact icon-only pill while you scroll, then return when you scroll back up. Tap the active icon to expand it.</Text>
+        <Segmented value={navMode} onChange={(v) => setDevicePrefs({ navMode: v })} options={[{ value: "auto", label: "Auto" }, { value: "expanded", label: "Always full" }, { value: "minimized", label: "Compact" }]} />
       </Card>
       <Card title="Motion">
         <SettingRow last title="Reduce motion" hint="Minimize animation and ambient theme effects across the app." right={<Toggle value={appearance.reduceMotion} onChange={(v) => update({ appearance: { reduceMotion: v } })} />} />
