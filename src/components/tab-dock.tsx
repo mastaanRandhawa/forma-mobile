@@ -48,8 +48,6 @@ const PAD = DOCK_PAD;
 const ITEM_FULL = DOCK_ITEM_FULL;
 const ITEM_MIN = DOCK_ITEM_MIN;
 const SLOT_MIN = 56;
-export const PLUS = 52;
-export const GAP = 12;
 
 const spring = (to: number) => (motion.reduced ? withTiming(to, { duration: 0 }) : withSpring(to, { damping: 20, stiffness: 260, mass: 0.7 }));
 
@@ -106,7 +104,7 @@ export function TabDock({ state, navigateToTab }: BottomTabBarProps) {
   const lastHover = useSharedValue(activeIndex);
   const [mounted, setMounted] = useState(false);
 
-  const fullW = useDerivedValue(() => Math.max(SLOT_MIN * n + PAD * 2, cw.value - PLUS - GAP));
+  const fullW = useDerivedValue(() => Math.max(SLOT_MIN * n + PAD * 2, cw.value));
   const minW = SLOT_MIN * n + PAD * 2;
   const pillW = useDerivedValue(() => interpolate(minimized.value, [0, 1], [fullW.value, minW]));
   const slot = useDerivedValue(() => (pillW.value - PAD * 2) / n);

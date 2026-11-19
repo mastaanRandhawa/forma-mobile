@@ -31,6 +31,7 @@ import { PressScale } from "@/components/ui/pressable";
 import { CountUp } from "@/components/ui/count-up";
 import { toast } from "@/components/ui/toast";
 import { KaiOrb, coachMood } from "@/components/ui/kai-orb";
+import { QuickLogRow } from "@/components/quick-actions";
 import { ProfileMenu } from "@/components/profile-menu";
 import { RecessedSurface } from "@/components/ui/surface";
 import { Label, Num, Text } from "@/components/ui/text";
@@ -243,6 +244,10 @@ export default function Dashboard() {
           <Quiet widgetKey="workout-streak">
             <WeekCard done={weekly.done} target={weekly.target} streak={d?.streakDays ?? 0} trained={trained} onOpen={() => router.push(prog.has("progress_basic") ? "/progress" : "/workouts")} />
           </Quiet>
+        </View>
+
+        <View style={{ marginBottom: 20 }}>
+          <QuickLogRow />
         </View>
 
         <PressScale onPress={() => router.push("/trainer")} to={0.985} accessibilityLabel={`Open chat with ${d?.trainerName ?? "Kai"}`} style={{ marginBottom: 24 }}>

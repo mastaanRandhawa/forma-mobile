@@ -2,7 +2,7 @@ import { View } from "react-native";
 import { Tabs, useSegments } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { NavChromeProvider } from "@/components/nav-chrome";
-import { QuickActions } from "@/components/quick-actions";
+import { QuickLogProvider } from "@/components/quick-actions";
 import { DOCK_FULL, dockBottom as dockBottomFor } from "@/components/dock-metrics";
 import { TabDock } from "@/components/tab-dock";
 import { WorkoutInProgressBar } from "@/components/workout-bar";
@@ -20,6 +20,7 @@ export default function TabsLayout() {
   const dockBottom = dockBottomFor(insets.bottom);
   return (
     <NavChromeProvider>
+      <QuickLogProvider>
       <View style={{ flex: 1 }}>
         <Tabs tabBar={(p) => <TabDock {...p} />} screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: "transparent" }, animation: "fade" }}>
           <Tabs.Screen name="dashboard" />
@@ -29,8 +30,8 @@ export default function TabsLayout() {
           <Tabs.Screen name="more" options={{ href: null }} />
         </Tabs>
         {!onTrainer ? <WorkoutInProgressBar bottom={dockBottom + DOCK_FULL + 10} /> : null}
-        <QuickActions bottom={dockBottom} />
       </View>
+      </QuickLogProvider>
     </NavChromeProvider>
   );
 }
