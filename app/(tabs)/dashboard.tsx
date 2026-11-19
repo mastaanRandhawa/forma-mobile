@@ -1,31 +1,38 @@
 /**
- * Home — the website's dashboard (pages/Home.tsx) as a single scrolling column:
- * greeting, metric rings (tap for a detail sheet), daily check-in, today's
- * session, streak, volume, weekly goal, up next, Kai, goals, records, insights.
+ * Home — one scrolling column in priority order:
+ *   1 greeting + readiness (one compact component; tap a metric for its detail)
+ *   2 today's workout, the primary focus
+ *   3 weekly progress
+ *   4 one Kai insight
+ *   5 goals and recent records as previews that link to their screens
+ * Volume detail lives in Progress; achievements live in Records.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Pressable, View } from "react-native";
+import { Animated, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "@/api/client";
-import { errorMessage, invalidateResource, useAchievements, useConsistency, useDashboard, useGoals, useNotifications, usePlannedWorkouts, useReadiness, useSessionHistory, useWallet } from "@/api/hooks";
+import { errorMessage, invalidateResource, useConsistency, useDashboard, useGoals, usePlannedWorkouts, useReadiness, useSessionHistory } from "@/api/hooks";
 import { usePrefs, useProgression } from "@/api/settings";
 import type { GoalWithProgress } from "@/api/types";
 import { useAuth } from "@/auth/auth-provider";
 import { fromKg, unitLabel } from "@/lib/workouts";
 import { useEquippedItem, useTheme } from "@/theme/theme-provider";
-import { colors, fonts, radius, toneColor, type Tone } from "@/theme/tokens";
-import { CheckinCard, useCheckins } from "@/components/checkin";
+import { colors, radius, type Tone } from "@/theme/tokens";
+import { CheckinSheet, useCheckins, useTodayCheckin } from "@/components/checkin";
 import { GoalLogSheet } from "@/components/goal-log";
 import { Quiet } from "@/components/quiet";
 import { useActiveSession } from "@/components/workout-bar";
 import { Screen } from "@/components/ui/screen";
-import { Button, ProgressBar, RingStat, SectionHeading } from "@/components/ui/controls";
-import { AreaChart, ErrorState, MiniBars, RingValue, ScrubChart, Sheet, Skel } from "@/components/ui/extra";
+import { Button, ProgressBar, Ring, SectionHeading } from "@/components/ui/controls";
+import { Card, EmptyState, ErrorState, MiniBars, RingValue, ScrubChart, Sheet, Skel } from "@/components/ui/extra";
+import { Fill } from "@/components/ui/gradient";
+import { PressScale } from "@/components/ui/pressable";
+import { CountUp } from "@/components/ui/count-up";
+import { toast } from "@/components/ui/toast";
 import { KaiOrb, coachMood } from "@/components/ui/kai-orb";
 import { ProfileMenu } from "@/components/profile-menu";
-import { RaisedSurface, SoftSurface } from "@/components/ui/surface";
+import { RecessedSurface } from "@/components/ui/surface";
 import { Label, Num, Text } from "@/components/ui/text";
 
 const DAY_MS = 864e5;
@@ -43,7 +50,6 @@ type Detail = { id: string; eyebrow: string; title: string; value: string; unit:
 export default function Dashboard() {
   useTheme();
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const prog = useProgression();
   const prefs = usePrefs();
@@ -52,47 +58,48 @@ export default function Dashboard() {
   const dash = useDashboard();
   const hist = useSessionHistory();
   const goals = useGoals();
-  const wallet = useWallet();
-  const notes = useNotifications();
-  const ach = useAchievements();
   const readiness = useReadiness();
   const cons = useConsistency(13);
   const planned = usePlannedWorkouts();
   const checkins = useCheckins();
+  const today = useTodayCheckin();
   const active = useActiveSession();
   const look = useEquippedItem("avatar")?.id;
   const d = dash.data;
   const [detail, setDetail] = useState<Detail | null>(null);
   const [logGoal, setLogGoal] = useState<GoalWithProgress | null>(null);
+  const [checkin, setCheckin] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [dismissed, setDismissed] = useState<string | null>(null);
 
   const refresh = () => {
     invalidateResource();
-    [dash, hist, goals, wallet, notes, ach, readiness, cons, planned, checkins, active].forEach((r) => r.refetch());
+    [dash, hist, goals, readiness, cons, planned, checkins, active].forEach((r) => r.refetch());
   };
 
   const sessions = useMemo(() => hist.data ?? [], [hist.data]);
-  const { volThis, volLast, trained } = useMemo(() => {
-    const week = (n: number) => {
-      const start = weekStart(n).getTime();
-      const out = new Array(7).fill(0);
-      for (const s of sessions) {
-        const i = Math.floor((new Date(s.startedAt).setHours(0, 0, 0, 0) - start) / DAY_MS);
-        if (i >= 0 && i < 7) out[i] += Math.round(fromKg(s.totalVolumeKg, units));
-      }
-      return out;
-    };
-    const t = week(0);
-    return { volThis: t, volLast: week(1), trained: t.map((v) => v > 0) };
-  }, [sessions, units]);
+  const trained = useMemo(() => {
+    const start = weekStart(0).getTime();
+    const out = new Array(7).fill(false);
+    for (const s of sessions) {
+      const i = Math.floor((new Date(s.startedAt).setHours(0, 0, 0, 0) - start) / DAY_MS);
+      if (i >= 0 && i < 7) out[i] = true;
+    }
+    return out as boolean[];
+  }, [sessions]);
 
   const ready = d ? d.readinessAvailable !== "unavailable" : false;
   const weekly = d?.weeklyRing ?? { done: 0, target: 0 };
   const vol7 = d ? fromKg(d.weeklyVolumeKg, units) : 0;
-  const unread = notes.data?.unreadCount ?? d?.notificationsUnread ?? 0;
   const adherence = cons.data ? Math.round(cons.data.adherence * 100) : null;
-  const avgSession = sessions.length ? Math.round(sessions.slice(0, 8).reduce((n, s) => n + fromKg(s.totalVolumeKg, units), 0) / Math.min(8, sessions.length)) : 0;
-  const upNext = (planned.data ?? []).filter((w) => w.scheduledDate && Date.parse(w.scheduledDate) >= new Date().setHours(0, 0, 0, 0)).sort((a, b) => Date.parse(a.scheduledDate!) - Date.parse(b.scheduledDate!)).slice(0, 3);
   const activeGoals = (goals.data ?? []).filter((g) => g.active);
+  // today's session: the dashboard's scheduled one, else the first planned workout (what Train shows)
+  const plannedToday = (planned.data ?? []).find((w) => !w.scheduledDate || new Date(w.scheduledDate).toDateString() === new Date().toDateString());
+  const todayW = d?.todayWorkout
+    ? { name: d.todayWorkout.name, meta: `${d.todayWorkout.durationMin ?? 45} min · ${d.todayWorkout.exercises} exercises`, muscles: d.todayWorkout.muscles }
+    : plannedToday
+      ? { name: plannedToday.name, meta: `${plannedToday.estimatedDurationMin ?? 45} min · ${plannedToday.exercises.length} exercises`, muscles: plannedToday.targetMuscleKeys }
+      : null;
 
   // ── metric detail sheets, built from real data ───────────────────────────
   const details = useMemo<Record<string, Detail>>(() => {
@@ -156,200 +163,135 @@ export default function Dashboard() {
   }, [readiness.data, checkins.data, ready, cons.data, sessions, units, u, vol7, adherence]);
 
   const hasRecovery = ready && !!d;
-  const insight = d && !hasRecovery ? { tone: "cyan" as Tone, icon: "moon-outline" as const, text: "No recovery data yet. Log a quick check-in and Forma can score your readiness before each session." } : d && d.streakDays === 0 && sessions.length > 0 ? { tone: "amber" as Tone, icon: "pulse-outline" as const, text: "Your streak has lapsed. A session today restarts it." } : null;
+  const score = readiness.data?.score ?? (hasRecovery ? d!.readiness : null);
+
+  const generate = async () => {
+    setGenerating(true);
+    try {
+      const w = (await api.workouts.generate({ focus: ["chest", "back", "quads"], durationMin: user?.sessionLengthTargetMin ?? 45, save: true })) as { id?: string };
+      if (!w?.id) throw new Error("Couldn't generate a workout. Try choosing one instead.");
+      invalidateResource();
+      await Promise.all([dash.refetch(), planned.refetch()]);
+      toast.success("Today's workout is ready");
+    } catch (e) {
+      toast.error(errorMessage(e as Error));
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  // one short, contextual line under the greeting
+  const subtitle = active.data
+    ? "A workout is in progress"
+    : todayW
+      ? `${todayW.name} today`
+      : (d?.streakDays ?? 0) > 0
+        ? `${d!.streakDays}-day streak — keep it going`
+        : "Ready when you are";
+
+  // the single Kai insight: a server insight if there is one, else the most relevant nudge
+  const serverInsight = prog.has("insights") ? (d?.insights ?? []).find((i) => i.id !== dismissed) : undefined;
+  const nudge = d && !hasRecovery ? "No recovery data yet. A quick check-in lets me score your readiness before each session." : d && d.streakDays === 0 && sessions.length > 0 ? "Your streak has lapsed. A session today restarts it." : null;
+  const kai = serverInsight ? { label: serverInsight.category, title: serverInsight.title, text: serverInsight.body, id: serverInsight.id } : { label: "Kai", title: undefined, text: nudge ?? d?.trainerMessage ?? "Ask me anything about your training.", id: null };
 
   return (
     <View style={{ flex: 1 }}>
       <Screen tabs refreshing={dash.loading && !dash.initialLoading} onRefresh={refresh}>
-        <View style={{ flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
           <View style={{ flex: 1, paddingRight: 12 }}>
-            <Text variant="title">{d?.greeting ?? partOfDay()}{(d?.user?.name ?? user?.name) ? `, ${(d?.user?.name ?? user?.name ?? "").split(" ")[0]}` : ""}</Text>
-            {dash.initialLoading ? <Skel h={14} w="80%" style={{ marginTop: 8 }} /> : <Text color="secondary" numberOfLines={2} style={{ marginTop: 4 }}>{d?.trainerMessage ?? "Here's where you stand today."}</Text>}
+            <Text variant="title" numberOfLines={1}>{d?.greeting ?? partOfDay()}{(d?.user?.name ?? user?.name) ? `, ${(d?.user?.name ?? user?.name ?? "").split(" ")[0]}` : ""}</Text>
+            {dash.initialLoading ? <Skel h={14} w="60%" style={{ marginTop: 8 }} /> : <Text color="secondary" numberOfLines={1} style={{ marginTop: 4 }}>{subtitle}</Text>}
           </View>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 14, paddingTop: 4 }}>
-            <Pressable onPress={() => router.push("/notifications")} hitSlop={10} accessibilityLabel={`Notifications${unread ? `, ${unread} unread` : ""}`}>
-              <Ionicons name="notifications-outline" size={24} color={colors.textSecondary} />
-              {unread > 0 ? <View style={{ position: "absolute", top: -4, right: -6, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: colors.pink, alignItems: "center", justifyContent: "center", paddingHorizontal: 3 }}><Text style={{ color: "#fff", fontSize: 10 }}>{unread > 99 ? "99+" : unread}</Text></View> : null}
-            </Pressable>
-            <ProfileMenu />
-          </View>
+          <ProfileMenu />
         </View>
 
-        {dash.error && !d ? <ErrorState message={errorMessage(dash.error)} onRetry={dash.refetch} /> : null}
+        {dash.error && !d ? <View style={{ marginBottom: 20 }}><ErrorState message={errorMessage(dash.error)} onRetry={dash.refetch} /></View> : null}
 
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          {[
-            { id: "readiness", label: "readiness", value: hasRecovery ? String(d!.readiness) : "—", sub: hasRecovery ? "from check-in" : "log a check-in", pct: hasRecovery ? d!.readiness : 0, tone: "pink" as Tone },
-            { id: "volume", label: "7-day volume", value: d ? `${(vol7 / 1000).toFixed(1)}k` : "—", sub: sessions.length ? u : "no sessions yet", pct: Math.min(100, Math.round(vol7 / 300)), tone: "cyan" as Tone },
-            { id: "consistency", label: "consistency", value: adherence != null ? `${adherence}%` : "—", sub: "last 13 weeks", pct: adherence ?? 0, tone: "lime" as Tone },
-          ].map((r) => (
-            <Quiet key={r.id} widgetKey={r.id}>
-              <RingStat label={r.label} value={r.value} sub={r.sub} pct={r.pct} tone={r.tone} onPress={() => setDetail(details[r.id])} />
-            </Quiet>
-          ))}
+        <View style={{ marginBottom: 20 }}>
+          <Quiet widgetKey="readiness">
+            <ReadinessCard
+              loading={dash.initialLoading}
+              score={hasRecovery ? score : null}
+              recommendation={readiness.data?.recommendation}
+              volume={d ? `${(vol7 / 1000).toFixed(1)}k` : "—"}
+              unit={u}
+              consistency={adherence != null ? `${adherence}%` : "—"}
+              checkedIn={today.done}
+              canCheckIn={prefs.recovery.manualCheckins}
+              onCheckIn={() => setCheckin(true)}
+              onOpen={(id) => setDetail(details[id])}
+            />
+          </Quiet>
         </View>
 
-        {prefs.recovery.manualCheckins ? <View style={{ marginTop: 14 }}><CheckinCard readiness={readiness.data?.score ?? (hasRecovery ? d!.readiness : null)} onSaved={() => { dash.refetch(); readiness.refetch(); }} /></View> : null}
+        <View style={{ marginBottom: 20 }}>
+          <TodayCard
+            loading={dash.initialLoading}
+            activeName={active.data?.name}
+            name={todayW?.name}
+            meta={todayW?.meta}
+            muscles={todayW?.muscles ?? []}
+            upcoming={d?.upcomingWorkout?.name}
+            generating={generating}
+            onPrimary={() => router.push(active.data ? "/workout/active" : "/workouts")}
+            onGenerate={generate}
+            onChoose={() => router.push("/workouts")}
+          />
+        </View>
 
-        <SectionHeading title="Today" />
-        <TodayCard
-          loading={dash.initialLoading}
-          name={d?.todayWorkout?.name}
-          meta={d?.todayWorkout ? `${d.todayWorkout.durationMin ?? 45} min · ${d.todayWorkout.exercises} exercises` : undefined}
-          muscles={d?.todayWorkout?.muscles ?? []}
-          trainerName={d?.trainerName}
-          look={look}
-          activeName={active.data?.name}
-          upcoming={d?.upcomingWorkout?.name}
-          onPress={() => router.push(active.data ? "/workout/active" : "/workouts")}
-        />
+        <View style={{ marginBottom: 20 }}>
+          <Quiet widgetKey="workout-streak">
+            <WeekCard done={weekly.done} target={weekly.target} streak={d?.streakDays ?? 0} trained={trained} onOpen={() => router.push(prog.has("progress_basic") ? "/progress" : "/workouts")} />
+          </Quiet>
+        </View>
 
-        {insight && prog.has("insights") ? (
-          <View style={{ marginTop: 14, flexDirection: "row", gap: 12, padding: 14, borderRadius: radius.medium, backgroundColor: colors.surface, borderLeftWidth: 3, borderLeftColor: toneColor[insight.tone] }}>
-            <Ionicons name={insight.icon} size={18} color={toneColor[insight.tone]} />
-            <Text style={{ flex: 1 }}>{insight.text}</Text>
-          </View>
-        ) : null}
-
-        <SectionHeading title="This week" action="Progress" onAction={() => prog.has("progress_basic") ? router.push("/progress") : router.push("/workouts")} />
-        <Quiet widgetKey="workout-streak">
-          <SoftSurface style={{ padding: 18, gap: 14 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-              <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
-                <Num size={40}>{d?.streakDays ?? 0}</Num>
-                <Text color="tertiary">{(d?.streakDays ?? 0) === 0 ? "start a streak today" : "day streak"}</Text>
-              </View>
-              <Flame active={(d?.streakDays ?? 0) > 0} />
+        <PressScale onPress={() => router.push("/trainer")} to={0.985} accessibilityLabel={`Open chat with ${d?.trainerName ?? "Kai"}`} style={{ marginBottom: 24 }}>
+          <RecessedSurface radiusSize="large" style={{ padding: 16, flexDirection: "row", gap: 12, alignItems: "flex-start" }}>
+            <KaiOrb size={32} look={look} state={coachMood(d)} />
+            <View style={{ flex: 1, gap: 3 }}>
+              <Label>{(d?.trainerName ?? "Kai").toUpperCase()}{kai.label !== "Kai" ? ` · ${kai.label.toUpperCase()}` : ""}</Label>
+              {kai.title ? <Text variant="cardTitle">{kai.title}</Text> : null}
+              <Text color="secondary" numberOfLines={3}>{kai.text}</Text>
             </View>
-            <View style={{ gap: 6 }}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                <Label>WEEKLY GOAL</Label>
-                <Num size={12} color="tertiary">{weekly.done} / {weekly.target}{weekly.target && weekly.done >= weekly.target ? " · met" : weekly.target ? ` · ${weekly.target - weekly.done} to go` : ""}</Num>
-              </View>
-              <ProgressBar pct={weekly.target ? (weekly.done / weekly.target) * 100 : 0} tone="pink" />
-            </View>
-            <View style={{ flexDirection: "row", gap: 6 }}>
-              {DAYS.map((l, i) => (
-                <View key={i} style={{ flex: 1, alignItems: "center", gap: 4 }}>
-                  <View style={{ height: 24, alignSelf: "stretch", borderRadius: 7, backgroundColor: trained[i] ? colors.amber : "rgba(255,255,255,0.07)" }} />
-                  <Text variant="meta" color="tertiary" style={{ fontSize: 10 }}>{l}</Text>
-                </View>
-              ))}
-            </View>
-          </SoftSurface>
-        </Quiet>
-
-        <SectionHeading title="Training volume" />
-        <Quiet widgetKey="training-volume-chart">
-          <SoftSurface style={{ padding: 18, gap: 10 }}>
-            {sessions.length ? <AreaChart series={[{ color: colors.pink, data: volThis }, { color: colors.blue, data: volLast }]} height={120} /> : <Text color="tertiary" style={{ paddingVertical: 24, textAlign: "center" }}>Finish a workout and this week's volume charts here.</Text>}
-            <View style={{ flexDirection: "row", gap: 16 }}>
-              <Legend color={colors.pink} label="This week" />
-              <Legend color={colors.blue} label="Last week" />
-              <Text variant="meta" color="tertiary" style={{ marginLeft: "auto" }}>{u}</Text>
-            </View>
-            <View style={{ flexDirection: "row", borderTopWidth: 1, borderTopColor: colors.lineSoft, paddingTop: 12 }}>
-              <View style={{ flex: 1, gap: 2 }}><Label>AVG SESSION</Label><Num size={18}>{avgSession ? `${(avgSession / 1000).toFixed(1)}k` : "—"}</Num></View>
-              <View style={{ flex: 1, gap: 2 }}><Label>SESSIONS LOGGED</Label><Num size={18}>{sessions.length}{sessions.length >= 40 ? "+" : ""}</Num></View>
-            </View>
-          </SoftSurface>
-        </Quiet>
-
-        {upNext.length || prog.has("workouts") ? (
-          <>
-            <SectionHeading title="Up next" action="Training" onAction={() => router.push("/workouts")} />
-            <SoftSurface style={{ paddingHorizontal: 16, paddingVertical: 6 }}>
-              {upNext.length === 0 ? (
-                <Pressable onPress={() => router.push("/workouts")} style={{ alignItems: "center", paddingVertical: 18, gap: 6 }}>
-                  <Ionicons name="calendar-outline" size={20} color={colors.textTertiary} />
-                  <Text color="secondary">Nothing scheduled</Text>
-                  <Label>PLAN YOUR NEXT SESSION</Label>
-                </Pressable>
-              ) : (
-                upNext.map((w, i) => (
-                  <Pressable key={w.id} onPress={() => router.push("/workouts")} style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 12, borderBottomWidth: i === upNext.length - 1 ? 0 : 1, borderBottomColor: colors.lineSoft }}>
-                    <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" }}><Ionicons name="barbell-outline" size={16} color={colors.textSecondary} /></View>
-                    <View style={{ flex: 1 }}>
-                      <Text numberOfLines={1}>{w.name}</Text>
-                      <Text variant="meta" color="tertiary" numberOfLines={1}>{w.targetMuscleKeys.join(", ") || `${w.exercises.length} exercises`}</Text>
-                    </View>
-                    <Text variant="meta" color="tertiary">{new Date(w.scheduledDate!).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</Text>
-                  </Pressable>
-                ))
-              )}
-            </SoftSurface>
-          </>
-        ) : null}
-
-        <Pressable onPress={() => router.push("/trainer")} style={({ pressed }) => ({ marginTop: 14, opacity: pressed ? 0.85 : 1 })} accessibilityRole="button" accessibilityLabel={`Message ${d?.trainerName ?? "Kai"}`}>
-          <SoftSurface style={{ padding: 16, flexDirection: "row", gap: 12, alignItems: "flex-start" }}>
-            <KaiOrb size={40} look={look} state={coachMood(d)} />
-            <View style={{ flex: 1, gap: 4 }}>
-              <Label>{(d?.trainerName ?? "Kai").toUpperCase()} · YOUR TRAINER</Label>
-              <Text color="secondary" numberOfLines={3}>{d?.trainerMessage ?? "Ask me anything about your training."}</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} style={{ alignSelf: "center" }} />
-          </SoftSurface>
-        </Pressable>
+            {kai.id ? (
+              <PressScale hitSlop={12} accessibilityLabel="Dismiss insight" onPress={async () => { const id = kai.id!; setDismissed(id); await api.trainer.dismissInsight(id).catch(() => {}); dash.refetch(); }}>
+                <Ionicons name="close" size={18} color={colors.textTertiary} />
+              </PressScale>
+            ) : <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} style={{ alignSelf: "center" }} />}
+          </RecessedSurface>
+        </PressScale>
 
         {prog.has("goals") ? (
-          <>
-            <SectionHeading title="Goals" action="Manage" onAction={() => router.push("/goals")} />
+          <View style={{ marginBottom: 12 }}>
+            <SectionHeading title="Goals" action="All goals" onAction={() => router.push("/goals")} />
             <Quiet widgetKey="goals-card">
-              <SoftSurface style={{ padding: 16, gap: 10 }}>
-                {goals.initialLoading ? [0, 1].map((i) => <Skel key={i} h={56} r={18} />) : goals.error && !goals.data ? (
+              <Card variant="compact" style={{ marginBottom: 0 }}>
+                {goals.initialLoading ? [0, 1].map((i) => <Skel key={i} h={48} r={16} style={{ marginBottom: 8 }} />) : goals.error && !goals.data ? (
                   <ErrorState message={errorMessage(goals.error)} onRetry={goals.refetch} />
                 ) : activeGoals.length === 0 ? (
-                  <View style={{ alignItems: "center", gap: 6, paddingVertical: 8 }}>
-                    <Text color="secondary" style={{ textAlign: "center" }}>Set a target for steps, protein, sleep or training frequency.</Text>
-                    <Button label="Create a goal" variant="ghost" onPress={() => router.push("/goals")} style={{ alignSelf: "stretch" }} />
-                  </View>
+                  <EmptyState title="No goals yet" body="Set a target for steps, protein, sleep or training." action="Create a goal" onAction={() => router.push("/goals")} />
                 ) : (
-                  <>
-                    {activeGoals.slice(0, 3).map((g) => <GoalRow key={g.id} g={g} onPress={() => setLogGoal(g)} />)}
-                    <Pressable onPress={() => router.push("/goals")} style={{ height: 40, borderRadius: radius.small, borderWidth: 1, borderStyle: "dashed", borderColor: colors.lineHighlight, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6 }}>
-                      <Ionicons name="add" size={14} color={colors.textTertiary} />
-                      <Text variant="meta" color="tertiary">New goal</Text>
-                    </Pressable>
-                  </>
+                  <View style={{ gap: 4 }}>{activeGoals.slice(0, 2).map((g) => <GoalRow key={g.id} g={g} onPress={() => setLogGoal(g)} />)}</View>
                 )}
-              </SoftSurface>
+              </Card>
             </Quiet>
-          </>
+          </View>
         ) : null}
 
         {d?.recentPRs?.length ? (
-          <>
+          <View style={{ marginBottom: 12 }}>
             <SectionHeading title="Recent records" action="All records" onAction={() => router.push("/records")} />
-            <SoftSurface style={{ padding: 16, gap: 12 }}>
-              {d.recentPRs.slice(0, 4).map((p, i) => (
-                <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                  <View style={{ flex: 1 }}><Text numberOfLines={1}>{p.lift}</Text><Text variant="meta" color="tertiary">{p.recordType.replace(/_/g, " ")}</Text></View>
-                  <Num size={18} style={{ color: colors.lime }}>{p.recordType === "max_reps" ? `${p.value} reps` : `${Math.round(fromKg(p.value, units))} ${u}`}</Num>
-                </View>
-              ))}
-            </SoftSurface>
-          </>
-        ) : null}
-
-        {prog.has("achievements") && (ach.data ?? []).some((a) => a.unlockedAt) ? (
-          <>
-            <SectionHeading title="Achievements" action="See all" onAction={() => router.push("/records")} />
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-              {ach.data!.filter((a) => a.unlockedAt).slice(0, 6).map((a) => (
-                <View key={a.key} style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, height: 34, borderRadius: 17, backgroundColor: colors.surface }}>
-                  <Ionicons name="trophy" size={13} color={colors.amber} /><Text variant="meta">{a.title}</Text>
-                </View>
-              ))}
-            </View>
-          </>
-        ) : null}
-
-        {prog.has("insights") && d?.insights?.length ? (
-          <>
-            <SectionHeading title="Insights" />
-            {d.insights.slice(0, 3).map((ins) => <InsightCard key={ins.id} title={ins.title} body={ins.body} category={ins.category} onDismiss={async () => { await api.trainer.dismissInsight(ins.id).catch(() => {}); dash.refetch(); }} />)}
-          </>
+            <Card variant="compact" style={{ marginBottom: 0 }}>
+              <View style={{ gap: 12 }}>
+                {d.recentPRs.slice(0, 3).map((p, i) => (
+                  <View key={i} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                    <View style={{ flex: 1 }}><Text numberOfLines={1}>{p.lift}</Text><Text variant="meta" color="tertiary">{p.recordType.replace(/_/g, " ")}</Text></View>
+                    <Num size={18} style={{ color: colors.lime }}>{p.recordType === "max_reps" ? `${p.value} reps` : `${Math.round(fromKg(p.value, units))} ${u}`}</Num>
+                  </View>
+                ))}
+              </View>
+            </Card>
+          </View>
         ) : null}
       </Screen>
 
@@ -383,17 +325,111 @@ export default function Dashboard() {
         ) : null}
       </Sheet>
 
+      <CheckinSheet visible={checkin} onClose={() => setCheckin(false)} seed={today.latest} onSaved={() => { today.refetch(); dash.refetch(); readiness.refetch(); }} />
       <GoalLogSheet goal={logGoal} onClose={() => setLogGoal(null)} onLogged={() => goals.refetch()} />
     </View>
   );
 }
 
-function Legend({ color, label }: { color: string; label: string }) {
+
+function ReadinessCard({ loading, score, recommendation, volume, unit, consistency, checkedIn, canCheckIn, onCheckIn, onOpen }: { loading: boolean; score: number | null; recommendation?: string; volume: string; unit: string; consistency: string; checkedIn: boolean; canCheckIn: boolean; onCheckIn: () => void; onOpen: (id: "readiness" | "volume" | "consistency") => void }) {
+  if (loading) return <Skel h={150} r={24} />;
+  const has = score != null;
+  const status = !has ? "No recovery data yet" : score >= 80 ? "Primed to train" : score >= 65 ? "Good to go" : score >= 50 ? "Take it steady" : "Prioritise recovery";
+  const line = !has ? "Check in and I'll score your readiness before each session." : (recommendation ?? "").split(/(?<=[.!?])\s/)[0] || "Your recovery looks steady today.";
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }} />
-      <Text variant="meta" color="tertiary">{label}</Text>
-    </View>
+    <Card variant="compact" style={{ marginBottom: 0 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 16 }}>
+        <PressScale onPress={() => onOpen("readiness")} to={0.96} accessibilityLabel={`Readiness ${has ? score : "not scored"}. Details`}>
+          <View style={{ width: 88, height: 88, alignItems: "center", justifyContent: "center" }}>
+            <Ring pct={has ? score : 0} tone="pink" size={88} stroke={8} />
+            <View style={{ position: "absolute", alignItems: "center" }}>
+              <CountUp value={has ? String(score) : "—"} size={26} />
+            </View>
+          </View>
+        </PressScale>
+        <View style={{ flex: 1, gap: 3 }}>
+          <Label>READINESS</Label>
+          <Text variant="cardTitle">{status}</Text>
+          <Text color="secondary" numberOfLines={2}>{line}</Text>
+        </View>
+      </View>
+      <View style={{ flexDirection: "row", alignItems: "center", marginTop: 16, gap: 8 }}>
+        <PressScale onPress={() => onOpen("volume")} to={0.97} style={{ flex: 1, paddingVertical: 4 }} accessibilityLabel={`7-day volume ${volume} ${unit}. Details`}>
+          <Label>7-DAY VOLUME</Label>
+          <View style={{ flexDirection: "row", alignItems: "baseline", gap: 4, marginTop: 2 }}><CountUp value={volume} size={20} /><Text variant="meta" color="tertiary">{unit}</Text></View>
+        </PressScale>
+        <PressScale onPress={() => onOpen("consistency")} to={0.97} style={{ flex: 1, paddingVertical: 4 }} accessibilityLabel={`Consistency ${consistency}. Details`}>
+          <Label>CONSISTENCY</Label>
+          <View style={{ marginTop: 2 }}><CountUp value={consistency} size={20} /></View>
+        </PressScale>
+        {canCheckIn ? <Button label={checkedIn ? "Update" : "Check in"} variant="text" onPress={onCheckIn} style={{ minWidth: 88 }} /> : null}
+      </View>
+    </Card>
+  );
+}
+
+function TodayCard({ loading, activeName, name, meta, muscles, upcoming, generating, onPrimary, onGenerate, onChoose }: { loading: boolean; activeName?: string; name?: string; meta?: string; muscles: string[]; upcoming?: string; generating: boolean; onPrimary: () => void; onGenerate: () => void; onChoose: () => void }) {
+  if (loading) return <Skel h={190} r={32} />;
+  const has = !!activeName || !!name;
+  return (
+    <Card variant="hero" style={{ marginBottom: 0 }}>
+      <Label>{activeName ? "WORKOUT IN PROGRESS" : "TODAY"}</Label>
+      {has ? (
+        <View style={{ gap: 6, marginTop: 6 }}>
+          <Text variant="heading">{activeName ?? name}</Text>
+          {!activeName && meta ? <Text color="secondary">{meta}</Text> : null}
+          {!activeName && muscles.length ? (
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 2 }}>
+              {muscles.slice(0, 4).map((m) => <View key={m} style={{ paddingHorizontal: 10, height: 26, borderRadius: 13, backgroundColor: "rgba(213,26,122,0.16)", justifyContent: "center" }}><Text variant="meta" style={{ color: colors.pinkSoft }}>{m.toLowerCase()}</Text></View>)}
+            </View>
+          ) : null}
+          <View style={{ marginTop: 14 }}><Button label={activeName ? "Resume workout" : "Start workout"} onPress={onPrimary} /></View>
+        </View>
+      ) : (
+        <View style={{ gap: 6, marginTop: 6 }}>
+          <Text variant="heading">Nothing planned today</Text>
+          <Text color="secondary">{upcoming ? `Up next: ${upcoming}. Or build a session for today.` : "Generate a session around your recovery and goals, or pick one yourself."}</Text>
+          <View style={{ marginTop: 14, gap: 2 }}>
+            <Button label="Generate workout" loading={generating} onPress={onGenerate} />
+            <Button label="Choose a workout" variant="text" onPress={onChoose} />
+          </View>
+        </View>
+      )}
+    </Card>
+  );
+}
+
+function WeekCard({ done, target, streak, trained, onOpen }: { done: number; target: number; streak: number; trained: boolean[]; onOpen: () => void }) {
+  const left = target ? Math.max(0, target - done) : 0;
+  return (
+    <Card variant="compact" style={{ marginBottom: 0 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+        <Label>THIS WEEK</Label>
+        <PressScale onPress={onOpen} hitSlop={10} accessibilityLabel="Open progress"><Text variant="meta" color="pink">Progress</Text></PressScale>
+      </View>
+      <View style={{ flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", marginTop: 8 }}>
+        <View style={{ flexDirection: "row", alignItems: "baseline", gap: 6 }}>
+          <Num size={34}>{done}</Num>
+          <Text color="tertiary">{target ? `of ${target} sessions${left ? ` · ${left} to go` : " · goal met"}` : "sessions"}</Text>
+        </View>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Flame active={streak > 0} />
+          <Text variant="meta" color="secondary">{streak > 0 ? `${streak}-day streak` : "No streak"}</Text>
+        </View>
+      </View>
+      <View style={{ marginTop: 12 }}><ProgressBar pct={target ? (done / target) * 100 : 0} tone="pink" /></View>
+      <View style={{ flexDirection: "row", gap: 6, marginTop: 14 }}>
+        {DAYS.map((l, i) => (
+          <View key={i} style={{ flex: 1, alignItems: "center", gap: 5 }}>
+            <View style={{ height: 22, alignSelf: "stretch", borderRadius: 8, overflow: "hidden", backgroundColor: "rgba(255,255,255,0.07)" }}>
+              {trained[i] ? <Fill angle={135} stops={[colors.pink, colors.coral]} /> : null}
+            </View>
+            <Text variant="meta" color="tertiary" style={{ fontSize: 11 }}>{l}</Text>
+          </View>
+        ))}
+      </View>
+    </Card>
   );
 }
 
@@ -412,40 +448,13 @@ function Flame({ active }: { active: boolean }) {
   );
 }
 
-function TodayCard({ loading, name, meta, muscles, trainerName, look, activeName, upcoming, onPress }: { loading: boolean; name?: string; meta?: string; muscles: string[]; trainerName?: string; look?: string; activeName?: string; upcoming?: string; onPress: () => void }) {
-  if (loading) return <Skel h={180} r={32} />;
-  return (
-    <RaisedSurface radiusSize="large" style={{ padding: 18, gap: 10 }}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-        <KaiOrb size={26} look={look} />
-        <Label>{activeName ? "WORKOUT IN PROGRESS" : `${(trainerName ?? "Kai").toUpperCase()} SUGGESTS`}</Label>
-      </View>
-      {activeName ? (
-        <Text variant="heading">{activeName}</Text>
-      ) : name ? (
-        <>
-          <Text variant="heading">{name}</Text>
-          {meta ? <Text color="secondary">{meta}</Text> : null}
-          {muscles.length ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>{muscles.slice(0, 5).map((m) => <View key={m} style={{ paddingHorizontal: 10, height: 24, borderRadius: 12, backgroundColor: "rgba(213,26,122,0.16)", justifyContent: "center" }}><Text variant="meta" style={{ color: colors.pinkSoft }}>{m.toLowerCase()}</Text></View>)}</View> : null}
-        </>
-      ) : (
-        <>
-          <Text variant="heading">Nothing scheduled</Text>
-          <Text color="secondary">{upcoming ? `Up next: ${upcoming}` : "No session planned for today. Plan one or start now."}</Text>
-        </>
-      )}
-      <Button label={activeName ? "Resume workout" : name ? "Start workout" : "Go to training"} variant="accent" onPress={onPress} />
-    </RaisedSurface>
-  );
-}
-
 function GoalRow({ g, onPress }: { g: GoalWithProgress; onPress: () => void }) {
   const pct = g.target ? (g.current / g.target) * 100 : 0;
   const done = g.completed || g.current >= g.target;
   const tone = (["pink", "cyan", "lime", "amber", "mauve", "violet"].includes(g.tone) ? g.tone : "pink") as Tone;
   return (
-    <Pressable onPress={onPress} accessibilityHint="Log progress" style={({ pressed }) => ({ flexDirection: "row", alignItems: "center", gap: 12, padding: 10, borderRadius: radius.small, backgroundColor: colors.surface, opacity: pressed ? 0.8 : 1 })}>
-      <RingValue pct={pct} size={42} tone={tone} color={done ? colors.lime : undefined}>
+    <PressScale onPress={onPress} to={0.985} accessibilityLabel={`${g.label}, ${g.current} of ${g.target} ${g.unit}. Log progress`} style={{ flexDirection: "row", alignItems: "center", gap: 14, minHeight: 52 }}>
+      <RingValue pct={pct} size={40} tone={tone} color={done ? colors.lime : undefined}>
         {done ? <Ionicons name="checkmark" size={16} color={colors.lime} /> : null}
       </RingValue>
       <View style={{ flex: 1 }}>
@@ -453,22 +462,6 @@ function GoalRow({ g, onPress }: { g: GoalWithProgress; onPress: () => void }) {
         <Text variant="meta" color="tertiary">{g.current.toLocaleString()} / {g.target.toLocaleString()} {g.unit} · {g.cadence}</Text>
       </View>
       <Ionicons name="add-circle-outline" size={22} color={colors.textSecondary} />
-    </Pressable>
-  );
-}
-
-function InsightCard({ title, body, category, onDismiss }: { title: string; body: string; category: string; onDismiss: () => void }) {
-  const [gone, setGone] = useState(false);
-  if (gone) return null;
-  return (
-    <View style={{ flexDirection: "row", gap: 12, padding: 14, marginBottom: 10, borderRadius: radius.medium, backgroundColor: colors.surface, borderLeftWidth: 3, borderLeftColor: colors.mauve }}>
-      <Ionicons name="sparkles-outline" size={18} color={colors.mauve} />
-      <View style={{ flex: 1, gap: 4 }}>
-        <Label>{category.toUpperCase()}</Label>
-        <Text style={{ fontFamily: fonts.medium }}>{title}</Text>
-        <Text color="secondary">{body}</Text>
-        <Pressable onPress={() => { setGone(true); onDismiss(); }} hitSlop={8} style={{ alignSelf: "flex-start", marginTop: 4 }}><Text variant="meta" color="pink">Dismiss</Text></Pressable>
-      </View>
-    </View>
+    </PressScale>
   );
 }
