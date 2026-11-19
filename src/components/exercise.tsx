@@ -18,6 +18,7 @@ import { fromKg, unitLabel } from "@/lib/workouts";
 import { colors, fonts, radius } from "@/theme/tokens";
 import { Chip } from "./ui/controls";
 import { Sheet } from "./ui/extra";
+import { ListFooter, SkelRows } from "./ui/loading";
 import { Label, Text } from "./ui/text";
 
 /**
@@ -77,13 +78,24 @@ export function ExercisePicker({ visible, onClose, onPick, title = "Add exercise
   const [muscle, setMuscle] = useState("All");
   const [items, setItems] = useState<Exercise[] | null>(null);
   const [error, setError] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [more, setMore] = useState(false);
   const run = useCallback((text: string, m: string) => {
     setError(false);
     api.library
-      .exercises({ q: text || undefined, muscle: m === "All" ? undefined : m.toLowerCase(), take: 40 })
-      .then((r) => setItems(r.items))
+      .exercises({ q: text || undefined, muscle: m === "All" ? undefined : m.toLowerCase(), take: 30 })
+      .then((r) => { setItems(r.items); setTotal(r.total ?? r.items.length); })
       .catch(() => setError(true));
   }, []);
+  const loadMore = () => {
+    if (more || !items) return;
+    setMore(true);
+    api.library
+      .exercises({ q: q.trim() || undefined, muscle: muscle === "All" ? undefined : muscle.toLowerCase(), take: 30, skip: items.length })
+      .then((r) => setItems((cur) => [...(cur ?? []), ...r.items.filter((x) => !(cur ?? []).some((c) => c.id === x.id))]))
+      .catch(() => setError(true))
+      .finally(() => setMore(false));
+  };
   useEffect(() => {
     if (!visible) return;
     const t = setTimeout(() => run(q.trim(), muscle), 250);
@@ -105,7 +117,7 @@ export function ExercisePicker({ visible, onClose, onPick, title = "Add exercise
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }} keyboardShouldPersistTaps="handled">
         {MUSCLES.map((m) => <Chip key={m} label={m} active={muscle === m} onPress={() => setMuscle(m)} />)}
       </ScrollView>
-      {items === null && !error ? <ActivityIndicator color={colors.pinkSoft} style={{ marginVertical: 20 }} /> : null}
+      {items === null && !error ? <View style={{ paddingVertical: 8 }}><SkelRows count={5} thumb={42} /></View> : null}
       {error ? <Text color="secondary">Couldn't search the library. Check your connection.</Text> : null}
       {items?.length === 0 ? <Text color="tertiary" style={{ textAlign: "center", paddingVertical: 16 }}>No exercises match.</Text> : null}
       {items?.map((e) => (
@@ -118,6 +130,13 @@ export function ExercisePicker({ visible, onClose, onPick, title = "Add exercise
           <Ionicons name="add-circle-outline" size={22} color={colors.textSecondary} />
         </Pressable>
       ))}
+      {items && items.length < total ? (
+        more ? <ListFooter loading /> : (
+          <Pressable onPress={loadMore} accessibilityRole="button" style={{ minHeight: 44, alignItems: "center", justifyContent: "center" }}>
+            <Text variant="meta" color="pink">Show more · {items.length} of {total}</Text>
+          </Pressable>
+        )
+      ) : null}
     </Sheet>
   );
 }

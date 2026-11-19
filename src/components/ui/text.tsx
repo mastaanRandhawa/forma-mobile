@@ -2,7 +2,7 @@ import { useContext } from "react";
 import { useTheme } from "@/theme/theme-provider";
 import { StyleSheet, Text as RNText, type StyleProp, type TextProps, type TextStyle } from "react-native";
 import Animated, { interpolateColor, useAnimatedStyle, type SharedValue } from "react-native-reanimated";
-import { withAlpha } from "@/lib/color";
+import { mix, withAlpha } from "@/lib/color";
 import { QuietCtx } from "./quiet-context";
 import { colors, fonts, type } from "@/theme/tokens";
 
@@ -67,7 +67,8 @@ export function Num({
 export function Label({ children, style, ...rest }: TextProps) {
   useTheme();
   return (
-    <RNText {...rest} style={[type.meta as TextStyle, { color: colors.textTertiary }, style]}>
+    // eyebrow labels sit a notch above tertiary so they stay readable at 12pt
+    <RNText {...rest} style={[type.meta as TextStyle, { color: mix(colors.textTertiary, colors.textSecondary, 0.45) }, style]}>
       {children}
     </RNText>
   );

@@ -4,7 +4,7 @@
  * equipment filters, 80 rows at a time, and the same detail drawer (start and
  * peak illustrations side by side, chips, muscles, instructions, form tips).
  */
-import { useDeferredValue, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { FlatList, Linking, ScrollView, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ExerciseThumb } from "@/components/exercise";
@@ -12,6 +12,7 @@ import { REPDB_URL, getRepdbCatalog, repdbImage, type RepDbCatalogEntry } from "
 import { useTheme } from "@/theme/theme-provider";
 import { colors, fonts, radius } from "@/theme/tokens";
 import { Screen } from "@/components/ui/screen";
+import { ListFooter } from "@/components/ui/loading";
 import { Chip } from "@/components/ui/controls";
 import { PageHeader, Sheet } from "@/components/ui/extra";
 import { PressScale } from "@/components/ui/pressable";
@@ -20,7 +21,7 @@ import { Label, Text } from "@/components/ui/text";
 
 const MUSCLES = ["All", "Chest", "Back", "Lats", "Shoulders", "Biceps", "Triceps", "Glutes", "Quads", "Hamstrings", "Abs", "Calves"];
 const EQUIPMENT = ["All", "Barbell", "Dumbbell", "Kettlebell", "Cable", "Machine", "Bodyweight", "Bands"];
-const LIMIT = 80;
+const LIMIT = 40;
 const cap = (s: string | null | undefined) => (s ? s[0].toUpperCase() + s.slice(1) : null);
 
 export default function ExerciseLibrary() {
@@ -41,7 +42,9 @@ export default function ExerciseLibrary() {
       return e.name.toLowerCase().includes(needle) || e.equipment.toLowerCase().includes(needle) || e.bodyPart.toLowerCase().includes(needle) || [...e.primary, ...e.secondary].some((m) => m.toLowerCase().includes(needle));
     });
   }, [catalog, needleRaw, muscle, equipment]);
-  const shown = filtered.slice(0, LIMIT);
+  const [limit, setLimit] = useState(LIMIT);
+  useEffect(() => setLimit(LIMIT), [needleRaw, muscle, equipment]);
+  const shown = filtered.slice(0, limit);
 
   const header = (
     <View>
@@ -67,6 +70,8 @@ export default function ExerciseLibrary() {
         ListHeaderComponent={<View style={{ paddingHorizontal: 20 }}>{header}</View>}
         contentContainerStyle={{ paddingBottom: 40 }}
         keyboardShouldPersistTaps="handled"
+        onEndReached={() => setLimit((l) => (l < filtered.length ? l + LIMIT : l))}
+        onEndReachedThreshold={0.6}
         initialNumToRender={14}
         windowSize={7}
         renderItem={({ item: e, index }) => (
@@ -84,7 +89,7 @@ export default function ExerciseLibrary() {
         ListEmptyComponent={<Text color="tertiary" style={{ paddingVertical: 24, textAlign: "center" }}>No exercises match those filters.</Text>}
         ListFooterComponent={
           <View style={{ paddingHorizontal: 20, paddingTop: 16, gap: 6 }}>
-            {filtered.length > LIMIT ? <Text variant="meta" color="tertiary" style={{ textAlign: "center" }}>Showing {LIMIT} of {filtered.length} — refine your search to narrow it down</Text> : null}
+            <ListFooter loading={limit < filtered.length} done={limit >= filtered.length && filtered.length > LIMIT} label={`All ${filtered.length} shown`} />
             <Text variant="meta" color="tertiary" style={{ textAlign: "center" }}>
               Exercise data & illustrations by <Text variant="meta" color="pink" onPress={() => Linking.openURL(REPDB_URL)}>RepDB (repdb.co)</Text>
             </Text>

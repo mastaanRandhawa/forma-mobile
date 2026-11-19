@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { TextInput, View } from "react-native";
+import { Alert, TextInput, View } from "react-native";
 import { api } from "@/api/client";
 import { useAuth } from "@/auth/auth-provider";
 import type { Equipment, InjuryNote, ProfilePatch } from "@/api/types";
@@ -110,7 +110,7 @@ export default function TrainingProfile() {
         {open === "inj" && (
           <View style={{ gap: 10, paddingBottom: 12 }}>
             {injuries.map((i) => (
-              <Chip key={i.id} label={`${i.tag}${i.note ? ` — ${i.note}` : ""}  ✕`} active onPress={async () => { await api.me.deleteInjury(i.id).catch(() => {}); setInjuries((l) => l.filter((x) => x.id !== i.id)); }} />
+              <Chip key={i.id} label={`${i.tag}${i.note ? ` — ${i.note}` : ""}  ✕`} active onPress={() => Alert.alert("Remove this limitation?", `"${i.tag}" will no longer be considered when planning workouts.`, [{ text: "Cancel", style: "cancel" }, { text: "Remove", style: "destructive", onPress: async () => { await api.me.deleteInjury(i.id).catch(() => {}); setInjuries((l) => l.filter((x) => x.id !== i.id)); } }])} />
             ))}
             <TextInput value={injury} onChangeText={setInjury} placeholder="e.g. left shoulder — no heavy overhead pressing" placeholderTextColor={colors.textTertiary} multiline style={{ minHeight: 70, borderRadius: 16, borderWidth: 1, borderColor: colors.lineSoft, backgroundColor: colors.surface, padding: 14, color: colors.textPrimary, fontFamily: fonts.regular, fontSize: 15 }} />
             <Button label="Add" variant="ghost" disabled={!injury.trim()} onPress={async () => { const n = await api.me.addInjury(injury.trim()).catch(() => null); if (n) setInjuries((l) => [...l, n]); setInjury(""); }} />

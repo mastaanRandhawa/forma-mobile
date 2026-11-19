@@ -3,7 +3,7 @@ import { ActivityIndicator, StyleSheet, TextInput, View, type TextInputProps, ty
 import Animated, { interpolateColor, useAnimatedProps, useAnimatedStyle, useSharedValue, withSequence, withTiming } from "react-native-reanimated";
 import Svg, { Circle } from "react-native-svg";
 import { useTheme } from "@/theme/theme-provider";
-import { colors, fonts, radius, shadow, toneColor, type Tone } from "@/theme/tokens";
+import { HIT, colors, fonts, radius, shadow, toneColor, type Tone } from "@/theme/tokens";
 import { withAlpha } from "@/lib/color";
 import { motion } from "@/lib/motion";
 import { DUR, EASE_LUXURY } from "@/lib/ease";
@@ -16,18 +16,27 @@ import { Label, Text } from "./text";
 type BtnProps = {
   label: string;
   onPress?: () => void;
-  variant?: "primary" | "accent" | "ghost";
+  /**
+   * primary    accent gradient — the one main action on a screen
+   * secondary  quiet filled pill
+   * text       tertiary, accent-coloured text only
+   * (legacy names: "accent" = primary, "ghost" = secondary)
+   */
+  variant?: "primary" | "secondary" | "text" | "accent" | "ghost";
+  /** md = 54pt, sm = 44pt (the minimum touch target) */
+  size?: "md" | "sm";
   loading?: boolean;
   disabled?: boolean;
   icon?: ReactNode;
   style?: ViewStyle;
 };
 
-/** Pill buttons: white "Notis" primary, accent-gradient, or quiet ghost. */
-export function Button({ label, onPress, variant = "primary", loading, disabled, icon, style }: BtnProps) {
+export function Button({ label, onPress, variant = "primary", size = "md", loading, disabled, icon, style }: BtnProps) {
   useTheme();
+  const kind = variant === "accent" ? "primary" : variant === "ghost" ? "secondary" : variant;
   const off = disabled || loading;
-  const ink = variant === "primary" ? colors.btnWhiteInk : variant === "accent" ? colors.onAccent : colors.textPrimary;
+  const ink = kind === "primary" ? colors.onAccent : kind === "text" ? colors.pink : colors.textPrimary;
+  const h = size === "sm" ? HIT : 54;
   return (
     <PressScale
       disabled={off}
@@ -35,15 +44,14 @@ export function Button({ label, onPress, variant = "primary", loading, disabled,
       haptic="light"
       to={0.975}
       accessibilityLabel={label}
-      style={[{ height: 54, borderRadius: radius.pill, overflow: "hidden" }, variant !== "ghost" ? shadow.float : null, style]}
+      style={[{ height: kind === "text" ? HIT : h, borderRadius: radius.pill, overflow: "hidden", justifyContent: "center" }, kind === "primary" ? shadow.float : null, style]}
     >
-      {variant === "primary" && <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.btnWhite }]} />}
-      {variant === "accent" && <Fill angle={135} stops={[{ color: colors.pink, at: 0 }, { color: colors.coral, at: 1 }]} />}
-      {variant === "ghost" && <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.lineSoft, borderRadius: radius.pill }]} />}
-      {variant !== "ghost" && <Fill angle={180} stops={[{ color: "rgba(255,255,255,0.22)", at: 0 }, { color: "rgba(255,255,255,0)", at: 0.5 }]} />}
-      <View style={{ flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 }}>
+      {kind === "primary" && <Fill angle={135} stops={[{ color: colors.pink, at: 0 }, { color: colors.coral, at: 1 }]} />}
+      {kind === "primary" && <Fill angle={180} stops={[{ color: "rgba(255,255,255,0.22)", at: 0 }, { color: "rgba(255,255,255,0)", at: 0.5 }]} />}
+      {kind === "secondary" && <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.surface, borderRadius: radius.pill }]} />}
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingHorizontal: kind === "text" ? 8 : 0 }}>
         {loading ? <ActivityIndicator color={ink} /> : icon}
-        <Text style={{ color: ink, fontFamily: fonts.semibold, fontSize: 16 }}>{label}</Text>
+        <Text style={{ color: ink, fontFamily: fonts.semibold, fontSize: size === "sm" || kind === "text" ? 15 : 16 }}>{label}</Text>
       </View>
     </PressScale>
   );
@@ -107,7 +115,7 @@ export function Chip({ label, active, onPress }: { label: string; active?: boole
   const inkOn = colors.btnWhiteInk;
   const ink = useAnimatedStyle(() => ({ color: interpolateColor(a.value, [0, 1], [inkOff, inkOn]) }));
   return (
-    <PressScale onPress={onPress} to={0.95} accessibilityRole="button" accessibilityState={{ selected: !!active }} style={{ paddingHorizontal: 14, height: 36, borderRadius: radius.pill, justifyContent: "center", overflow: "hidden", backgroundColor: colors.surface, borderWidth: 1, borderColor: active ? "transparent" : colors.lineSoft }}>
+    <PressScale onPress={onPress} to={0.95} hitSlop={{ top: 4, bottom: 4, left: 2, right: 2 }} accessibilityRole="button" accessibilityState={{ selected: !!active }} style={{ paddingHorizontal: 14, height: 36, borderRadius: radius.pill, justifyContent: "center", overflow: "hidden", backgroundColor: colors.surface, borderWidth: 1, borderColor: active ? "transparent" : colors.lineSoft }}>
       <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: colors.btnWhite }, bg]} />
       <Animated.Text style={[{ fontFamily: fonts.semibold, fontSize: 13 }, ink]}>{label}</Animated.Text>
     </PressScale>
@@ -176,7 +184,7 @@ export function SectionHeading({ title, action, onAction }: { title: string; act
   useTheme();
   return (
     <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10, marginTop: 8 }}>
-      <Text variant="heading">{title}</Text>
+      <Text variant="section">{title}</Text>
       {action ? (
         <PressScale onPress={onAction} hitSlop={10} to={0.94}>
           <Text variant="meta" color="pink">{action}</Text>

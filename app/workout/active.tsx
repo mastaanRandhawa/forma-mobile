@@ -7,7 +7,7 @@
  * and persists it per session so nothing is lost on navigation or app kill.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, AppState, Easing, Image, Pressable, ScrollView, Vibration, View } from "react-native";
+import { Alert, Animated, AppState, Easing, Image, Pressable, ScrollView, Vibration, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
@@ -50,7 +50,7 @@ import { repdbEntryFor, repdbImage } from "@/lib/repdb";
 import { ExerciseDetailSheet, ExercisePicker, ExerciseThumb } from "@/components/exercise";
 import { Atmosphere, Screen } from "@/components/ui/screen";
 import { Button, Chip } from "@/components/ui/controls";
-import { EmptyState, PageSkeleton, Sheet, Stepper } from "@/components/ui/extra";
+import { EmptyState, PageSkeleton, SettingRow, Sheet, Stepper } from "@/components/ui/extra";
 import { KaiOrb } from "@/components/ui/kai-orb";
 import { toast } from "@/components/ui/toast";
 import { Label, Num, Text } from "@/components/ui/text";
@@ -92,7 +92,7 @@ export default function ActiveWorkout() {
   const [history, setHistory] = useState<Record<string, ExerciseHistory | null>>({});
   const [cue, setCue] = useState<{ event: CueEvent; ctx: CueContext }>({ event: "start", ctx: {} });
   const [milestone, setMilestone] = useState<{ kind: "pr" | "exercise"; title: string; detail?: string } | null>(null);
-  const [sheet, setSheet] = useState<null | "overview" | "end" | "add" | "swap" | "howto" | "swapLibrary">(null);
+  const [sheet, setSheet] = useState<null | "overview" | "end" | "add" | "swap" | "howto" | "swapLibrary" | "menu">(null);
   const [swapFor, setSwapFor] = useState<ExercisePerformance | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -421,6 +421,15 @@ export default function ActiveWorkout() {
     }
   };
 
+  /** Ask before anything that changes or discards the session. */
+  const ask = (title: string, message: string, label: string, run: () => void, destructive = false) =>
+    Alert.alert(title, message, [{ text: "Cancel", style: "cancel" }, { text: label, style: destructive ? "destructive" : "default", onPress: run }]);
+  /** Menu rows close the menu first, then act — two modals can't swap in one frame. */
+  const fromMenu = (fn: () => void) => () => {
+    setSheet(null);
+    setTimeout(fn, 280);
+  };
+
   const defer = (perf: ExercisePerformance, reason: string) => {
     if (!session) return;
     patchUI((c) => {
@@ -554,9 +563,8 @@ export default function ActiveWorkout() {
               <Ionicons name={ui.paused ? "play" : "pause"} size={13} color={ui.paused ? colors.amber : colors.textSecondary} />
               <Num size={14}>{fmtClock(elapsed)}</Num>
             </Pressable>
-            <Pressable onPress={() => setSheet("overview")} accessibilityLabel="Workout overview" style={{ height: 34, paddingHorizontal: 12, borderRadius: radius.pill, backgroundColor: colors.surface, flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <Ionicons name="list" size={15} color={colors.textSecondary} />
-              <Text variant="meta" color="secondary">Overview</Text>
+            <Pressable onPress={() => setSheet("menu")} accessibilityLabel="Workout options" hitSlop={5} style={{ width: 44, height: 34, borderRadius: radius.pill, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" }}>
+              <Ionicons name="ellipsis-horizontal" size={18} color={colors.textSecondary} />
             </Pressable>
           </View>
         </View>
@@ -613,12 +621,6 @@ export default function ActiveWorkout() {
             onAmrap={(row) => patchUI((c) => ({ ...c, amrap: row.amrap ? c.amrap.filter((k) => k !== setKey(current.id, row.n)) : [...c.amrap, setKey(current.id, row.n)] }))}
             onComplete={completeActive}
             onAddSet={(w) => addSet(current, w)}
-            onHowto={() => setSheet("howto")}
-            onBusy={() => defer(current, "machine busy")}
-            onReplace={() => {
-              setSwapFor(current);
-              setSheet("swap");
-            }}
           />
         ) : session.performances.length ? (
           <View style={{ padding: 20, borderRadius: radius.large, backgroundColor: colors.surface, gap: 10, alignItems: "center" }}>
@@ -632,12 +634,19 @@ export default function ActiveWorkout() {
           </View>
         ) : null}
 
-        {current && !resting ? <SetList perf={current} ui={ui} units={units} history={history[current.exercise.slug] ?? null} onToggle={(r) => toggleRow(current, r)} onDelete={(r) => deleteRow(current, r)} /> : null}
+        {current && !resting ? <SetList perf={current} ui={ui} units={units} history={history[current.exercise.slug] ?? null} onToggle={(r) => (r.done ? ask("Undo this set?", "It will be removed from your log; the numbers stay as a draft.", "Undo set", () => toggleRow(current, r)) : toggleRow(current, r))} onDelete={(r) => ask("Delete this set?", `Set ${r.n} will be removed from ${current.exercise.name}.`, "Delete", () => deleteRow(current, r), true)} /> : null}
 
-        <Pressable onPress={() => setSheet("end")} style={{ alignSelf: "center", paddingVertical: 12, paddingHorizontal: 20 }} accessibilityRole="button">
-          <Text color="tertiary">End workout</Text>
-        </Pressable>
       </ScrollView>
+
+      {/* workout menu — everything that isn't "log the next set" lives here */}
+      <Sheet visible={sheet === "menu"} onClose={() => setSheet(null)} title="Workout options" eyebrow={session.name}>
+        <SettingRow icon="list" title="Overview" hint="All exercises, reorder, skip or do later" onPress={fromMenu(() => setSheet("overview"))} />
+        {current ? <SettingRow icon="information-circle-outline" title="How to do this exercise" onPress={fromMenu(() => setSheet("howto"))} /> : null}
+        {current ? <SettingRow icon="swap-horizontal" title="Replace this exercise" onPress={fromMenu(() => { setSwapFor(current); setSheet("swap"); })} /> : null}
+        {current ? <SettingRow icon="time-outline" title="Machine busy — do it later" onPress={fromMenu(() => ask("Move to later?", `${current.exercise.name} goes to the end of today's session.`, "Do it later", () => defer(current, "machine busy")))} /> : null}
+        <SettingRow icon={ui.paused ? "play" : "pause"} title={ui.paused ? "Resume workout" : "Pause workout"} onPress={fromMenu(togglePause)} />
+        <SettingRow icon="exit-outline" title="End workout" onPress={fromMenu(() => setSheet("end"))} />
+      </Sheet>
 
       {/* overview */}
       <Sheet visible={sheet === "overview"} onClose={() => setSheet(null)} title="Workout overview" eyebrow={session.name}>
@@ -659,10 +668,10 @@ export default function ActiveWorkout() {
                   </View>
                 </Pressable>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                  {ph !== "skipped" && ph !== "done" && ph !== "deferred" ? <Chip label="Do later" onPress={() => defer(p, "do later")} /> : null}
+                  {ph !== "skipped" && ph !== "done" && ph !== "deferred" ? <Chip label="Do later" onPress={() => ask("Move to later?", `${p.exercise.name} goes to the end of today's session.`, "Do it later", () => defer(p, "do later"))} /> : null}
                   {ph === "deferred" ? <Chip label="Resume now" active onPress={() => resume(p)} /> : null}
                   {ph !== "skipped" ? <Chip label="Replace" onPress={() => { setSwapFor(p); setSheet("swap"); }} /> : null}
-                  {ph === "skipped" ? <Chip label="Add back" onPress={() => setSkip(p, false)} /> : ph !== "done" ? <Chip label="Skip" onPress={() => setSkip(p, true)} /> : null}
+                  {ph === "skipped" ? <Chip label="Add back" onPress={() => setSkip(p, false)} /> : ph !== "done" ? <Chip label="Skip" onPress={() => ask("Skip this exercise?", `${p.exercise.name} won't be counted today. You can add it back from the overview.`, "Skip", () => setSkip(p, true), true)} /> : null}
                 </View>
               </View>
             </View>
@@ -673,8 +682,8 @@ export default function ActiveWorkout() {
       </Sheet>
 
       <ExercisePicker visible={sheet === "add"} onClose={() => setSheet(null)} onPick={addExercise} />
-      <ExercisePicker visible={sheet === "swapLibrary"} title="Replace from library" onClose={() => setSheet(null)} onPick={(e) => swapFor && swapTo(swapFor, e.id, e.name)} />
-      <SwapSheet perf={sheet === "swap" ? swapFor : null} onClose={() => setSheet(null)} onPick={async (s) => { if (!swapFor) return; try { const found = await api.library.exercise(s.slug); await swapTo(swapFor, found.id, found.name); } catch (e) { toast.error(errorMessage(e as Error)); } }} onLibrary={() => setSheet("swapLibrary")} />
+      <ExercisePicker visible={sheet === "swapLibrary"} title="Replace from library" onClose={() => setSheet(null)} onPick={(e) => { if (!swapFor) return; const target = swapFor; ask("Replace exercise?", `${target.exercise.name} will be replaced by ${e.name} for today only.`, "Replace", () => void swapTo(target, e.id, e.name)); }} />
+      <SwapSheet perf={sheet === "swap" ? swapFor : null} onClose={() => setSheet(null)} onPick={(s) => { if (!swapFor) return; const target = swapFor; ask("Replace exercise?", `${target.exercise.name} will be replaced by ${s.name} for today only.`, "Replace", async () => { try { const found = await api.library.exercise(s.slug); await swapTo(target, found.id, found.name); } catch (e) { toast.error(errorMessage(e as Error)); } }); }} onLibrary={() => setSheet("swapLibrary")} />
       <ExerciseDetailSheet slug={sheet === "howto" && current ? current.exercise.slug : null} preview={current?.exercise} onClose={() => setSheet(null)} />
 
       {/* leave / finish */}
@@ -684,7 +693,7 @@ export default function ActiveWorkout() {
         {!prog.setsDone ? <Text variant="meta" color="tertiary">Log at least one set to save this workout.</Text> : null}
         <Button label="Continue workout" variant="ghost" onPress={() => setSheet(null)} />
         <Button label="Pause & exit — resume later" variant="ghost" onPress={pauseAndExit} />
-        <Pressable onPress={discard} disabled={busy === "discard"} style={{ alignItems: "center", paddingVertical: 12 }} accessibilityRole="button">
+        <Pressable onPress={() => ask("Discard this workout?", "Everything logged in this session will be deleted. This can't be undone.", "Discard", discard, true)} disabled={busy === "discard"} style={{ alignItems: "center", paddingVertical: 12 }} accessibilityRole="button">
           <Text style={{ color: colors.danger }}>{busy === "discard" ? "Discarding…" : "Discard without saving"}</Text>
         </Pressable>
       </Sheet>
@@ -736,9 +745,6 @@ function FocusCard(props: {
   onAmrap: (row: SetRow) => void;
   onComplete: () => void;
   onAddSet: (warmup: boolean) => void;
-  onHowto: () => void;
-  onBusy: () => void;
-  onReplace: () => void;
 }) {
   const { perf, ui, units } = props;
   const u = unitLabel(units);
@@ -764,6 +770,7 @@ function FocusCard(props: {
   const bodyweight = !!perf.exercise.isBodyweight;
   const wDisp = row?.weightKg != null ? fromKg(row.weightKg, units) : null;
   const plates = wDisp != null && !bodyweight ? plateCombo(wDisp, units === "metric" ? 20 : 45, u) : null;
+  const [opts, setOpts] = useState(false);
   const note = (perf.prescriptionAudit?.output as { note?: string } | undefined)?.note;
 
   const fillPrevious = () => {
@@ -777,12 +784,8 @@ function FocusCard(props: {
   return (
     <View style={[{ borderRadius: radius.large, overflow: "hidden", backgroundColor: colors.surfaceOpaque, borderWidth: 1, borderColor: colors.lineSoft }, shadow.soft]}>
       {frames.length ? (
-        <View style={{ height: 170, backgroundColor: "#fff" }}>
+        <View style={{ height: 130, backgroundColor: "#fff" }}>
           <Image source={{ uri: frames[frame % frames.length] }} style={{ flex: 1 }} resizeMode="contain" accessibilityLabel={`${perf.exercise.name} demonstration`} />
-          <Pressable onPress={props.onHowto} style={{ position: "absolute", right: 12, bottom: 12, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, height: 32, borderRadius: radius.pill, backgroundColor: "rgba(20,8,16,0.72)" }} accessibilityRole="button">
-            <Ionicons name="information-circle-outline" size={16} color="#fff" />
-            <Text variant="meta" style={{ color: "#fff" }}>How to</Text>
-          </Pressable>
         </View>
       ) : null}
       <View style={{ padding: 18, gap: 14 }}>
@@ -790,7 +793,6 @@ function FocusCard(props: {
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             {props.superset ? <View style={{ paddingHorizontal: 8, height: 22, borderRadius: 11, justifyContent: "center", backgroundColor: "rgba(179,101,150,0.25)" }}><Text variant="meta" style={{ color: colors.pinkSoft }}>{props.superset}</Text></View> : null}
             <Label>EXERCISE {props.position}/{props.total}{ui.swappedFrom[perf.id] ? ` · SWAPPED FROM ${ui.swappedFrom[perf.id].toUpperCase()}` : ""}</Label>
-            {!frames.length ? <Pressable onPress={props.onHowto} hitSlop={8}><Text variant="meta" color="pink">How to</Text></Pressable> : null}
           </View>
           <Text style={{ fontFamily: fonts.light, fontSize: 30, lineHeight: 34, letterSpacing: -0.6 }}>{perf.exercise.name}</Text>
           <View style={{ flexDirection: "row", alignItems: "baseline", gap: 6 }}>
@@ -798,26 +800,25 @@ function FocusCard(props: {
           </View>
         </View>
 
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <Pressable onPress={fillPrevious} disabled={!lastSets.length} style={{ flex: 1, padding: 12, borderRadius: radius.small, backgroundColor: colors.surface, gap: 4 }} accessibilityHint="Fills the set with your last top set">
-            <Label>PREVIOUS{lastSets.length ? " · TAP TO FILL" : ""}</Label>
-            <Text numberOfLines={1} style={{ fontFamily: fonts.num, fontSize: 14 }}>{lastSets.length ? lastSets.slice(0, 3).map((s) => `${s.weightKg != null ? fromKg(s.weightKg, units) : "BW"}×${s.reps ?? "—"}`).join("  ") : props.history ? "First time" : "…"}</Text>
+        {lastSets.length ? (
+          <Pressable onPress={fillPrevious} accessibilityHint="Fills the set with your last top set" style={{ flexDirection: "row", alignItems: "center", gap: 8, minHeight: 44 }}>
+            <Ionicons name="time-outline" size={16} color={colors.textTertiary} />
+            <Text variant="meta" color="secondary" numberOfLines={1} style={{ flex: 1 }}>
+              Last time {lastSets.slice(0, 3).map((s) => `${s.weightKg != null ? fromKg(s.weightKg, units) : "BW"}×${s.reps ?? "—"}`).join("  ")}
+            </Text>
+            <Text variant="meta" color="pink">Use</Text>
           </Pressable>
-          <View style={{ flex: 1, padding: 12, borderRadius: radius.small, backgroundColor: "rgba(213,26,122,0.10)", gap: 4 }}>
-            <Label style={{ color: colors.pinkSoft }}>TODAY</Label>
-            <Text numberOfLines={1} style={{ fontFamily: fonts.num, fontSize: 14 }}>{rxW != null || rxR != null ? `${rxW != null ? `${fromKg(rxW, units)} ${u} ` : ""}${rxR != null ? `× ${rxR}` : ""}` : ui.targets[perf.id] ?? "—"}</Text>
-            {pct && pct >= 40 && pct <= 115 ? <Text variant="meta" color="tertiary">{pct}% of est. 1RM</Text> : note ? <Text variant="meta" color="tertiary" numberOfLines={2}>{note}</Text> : null}
-          </View>
-        </View>
+        ) : (
+          <Text variant="meta" color="tertiary">{props.history ? "First time — nothing to compare yet" : " "}</Text>
+        )}
 
         {!bodyweight ? (
           <View style={{ flexDirection: "row" }}>
             <Stepper label="weight" suffix={u} value={wDisp} step={props.step} max={2000} onChange={(v) => props.onPatch(row, { weightKg: v == null ? null : toKg(v, units) })} />
           </View>
         ) : null}
-        <View style={{ flexDirection: "row", gap: 10 }}>
+        <View style={{ flexDirection: "row" }}>
           <Stepper label={row.amrap ? "reps · amrap" : "reps"} value={row.reps} step={1} max={200} onChange={(v) => props.onPatch(row, { reps: v == null ? null : Math.round(v) })} placeholder={row.amrap ? "max" : "—"} />
-          <Stepper label="rpe" value={row.rpe} step={0.5} max={10} onChange={(v) => props.onPatch(row, { rpe: v })} />
         </View>
 
         {plates && plates.perSide.length ? (
@@ -831,20 +832,22 @@ function FocusCard(props: {
 
         <Button label={props.paused ? "Paused — resume to log" : row.warmup ? "Complete warm-up" : `Complete set ${doneW + 1}`} variant="accent" loading={props.busy} disabled={props.paused} onPress={props.onComplete} icon={<Ionicons name="checkmark" size={20} color={colors.onColor} />} />
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-          <Chip label="+ Set" onPress={() => props.onAddSet(false)} />
-          <Chip label="+ Warm-up" onPress={() => props.onAddSet(true)} />
-          <Chip label={row.warmup ? "Unmark warm-up" : "This is a warm-up"} active={row.warmup} onPress={() => props.onPatch(row, { warmup: !row.warmup })} />
-          <Chip label={row.amrap ? "Unmark AMRAP" : "AMRAP set"} active={row.amrap} onPress={() => props.onAmrap(row)} />
-          <Chip label="Machine busy" onPress={props.onBusy} />
-          <Chip label="Replace" onPress={props.onReplace} />
-        </ScrollView>
+        <Pressable onPress={() => setOpts(true)} accessibilityRole="button" style={{ alignSelf: "center", minHeight: 44, justifyContent: "center", paddingHorizontal: 12 }}>
+          <Text variant="meta" color="secondary">Set options{row.rpe != null ? ` · RPE ${row.rpe}` : ""}{row.amrap ? " · AMRAP" : ""}{row.warmup ? " · warm-up" : ""}</Text>
+        </Pressable>
 
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingTop: 4 }}>
           <KaiOrb size={26} look={props.look} />
           <Text color="secondary" style={{ flex: 1, fontStyle: "italic" }}>{props.cue}</Text>
         </View>
       </View>
+      <Sheet visible={opts} onClose={() => setOpts(false)} title="Set options" eyebrow={perf.exercise.name}>
+        <Stepper label="rpe (effort 1–10)" value={row.rpe} step={0.5} max={10} onChange={(v) => props.onPatch(row, { rpe: v })} />
+        <SettingRow icon="add-circle-outline" title="Add a set" onPress={() => { setOpts(false); props.onAddSet(false); }} />
+        <SettingRow icon="flame-outline" title="Add a warm-up set" onPress={() => { setOpts(false); props.onAddSet(true); }} />
+        <SettingRow icon="flame" title={row.warmup ? "This is a working set" : "Mark this as a warm-up"} onPress={() => { setOpts(false); props.onPatch(row, { warmup: !row.warmup }); }} />
+        <SettingRow icon="infinite" title={row.amrap ? "Unmark AMRAP" : "AMRAP — as many reps as possible"} onPress={() => { setOpts(false); props.onAmrap(row); }} />
+      </Sheet>
     </View>
   );
 }

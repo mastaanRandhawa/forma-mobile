@@ -1,12 +1,11 @@
 /**
- * Floating quick-action button on Home (website: layout/QuickActions.tsx):
- * start a workout, log food, log bodyweight, add water, daily check-in.
- * Actions fan out upward with a staggered spring over a dimmed backdrop.
+ * Quick logging — weight, water and the daily check-in — as contextual actions.
+ * The old global floating "+" is gone: <QuickLogRow/> sits on Home, Start workout
+ * lives on Home/Train, Log food on Nutrition (and Kai's menu). One provider owns
+ * the sheets so any screen can open them via useQuickLog().
  */
-import { useEffect, useRef, useState } from "react";
-import { Animated, Pressable, TextInput, View } from "react-native";
-import RAnimated, { useAnimatedStyle } from "react-native-reanimated";
-import { useNavChrome } from "./nav-chrome";
+import { createContext, useContext, useState, type ReactNode } from "react";
+import { Pressable, ScrollView, TextInput, View } from "react-native";
 import { useTheme } from "@/theme/theme-provider";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
@@ -16,53 +15,49 @@ import { errorMessage, invalidateResource, useGoals } from "@/api/hooks";
 import { useAuth } from "@/auth/auth-provider";
 import { grantGoalReward } from "@/lib/rewards";
 import { toKg } from "@/lib/workouts";
-import { colors, fonts, radius, shadow } from "@/theme/tokens";
+import { colors, fonts, radius, space } from "@/theme/tokens";
 import { CheckinSheet, useTodayCheckin } from "./checkin";
-import { Button } from "./ui/controls";
+import { Button, Chip } from "./ui/controls";
 import { Sheet } from "./ui/extra";
 import { toast } from "./ui/toast";
 import { Text } from "./ui/text";
 
-type ActionId = "workout" | "food" | "weight" | "water" | "checkin";
-const ACTIONS: { id: ActionId; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
-  { id: "workout", label: "Start workout", icon: "barbell-outline" },
-  { id: "food", label: "Log food", icon: "restaurant-outline" },
-  { id: "weight", label: "Log weight", icon: "scale-outline" },
-  { id: "water", label: "Add water", icon: "water-outline" },
-  { id: "checkin", label: "Daily check-in", icon: "moon-outline" },
-];
+type QuickLog = { weight: () => void; water: () => void; checkin: () => void };
+const Ctx = createContext<QuickLog>({ weight: () => {}, water: () => {}, checkin: () => {} });
+export const useQuickLog = () => useContext(Ctx);
 
-export function QuickActions({ bottom }: { bottom: number }) {
-  useTheme();
+/** The four quick actions as one compact, scrollable chip row. */
+export function QuickLogRow({ bleed = true }: { bleed?: boolean }) {
+  const q = useQuickLog();
   const router = useRouter();
-  const nav = useNavChrome();
+  const go = (fn: () => void) => () => { Haptics.selectionAsync().catch(() => {}); fn(); };
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={bleed ? { marginHorizontal: -space.page } : undefined} contentContainerStyle={{ gap: 8, paddingHorizontal: bleed ? space.page : 0, paddingVertical: 2 }}>
+      <Chip label="Log food" onPress={go(() => router.push({ pathname: "/nutrition", params: { add: "1" } }))} />
+      <Chip label="Log weight" onPress={go(q.weight)} />
+      <Chip label="Add water" onPress={go(q.water)} />
+      <Chip label="Daily check-in" onPress={go(q.checkin)} />
+    </ScrollView>
+  );
+}
+
+export function QuickLogProvider({ children }: { children: ReactNode }) {
+  useTheme();
   const { user, refreshUser } = useAuth();
   const metric = user?.unitPreference === "metric";
   const goals = useGoals();
   const today = useTodayCheckin();
-  const [open, setOpen] = useState(false);
   const [sheet, setSheet] = useState<null | "weight" | "water" | "checkin">(null);
   const [val, setVal] = useState("");
   const [busy, setBusy] = useState(false);
-  const a = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.spring(a, { toValue: open ? 1 : 0, useNativeDriver: true, stiffness: 320, damping: 24 }).start();
-  }, [open, a]);
-
-  // sits level with the tab pill; drops 6px as the pill shrinks so both stay bottom-aligned
-  const dockPos = useAnimatedStyle(() => ({ bottom: bottom + 6 * (1 - nav.minimized.value) }));
-
   const water = (goals.data ?? []).find((g) => g.active && (g.key === "water" || /water/i.test(g.label)));
   const waterUnit = water?.unit ?? (metric ? "ml" : "oz");
 
-  const pick = (id: ActionId) => {
-    Haptics.selectionAsync().catch(() => {});
-    setOpen(false);
-    if (id === "workout") return router.push("/workouts");
-    if (id === "food") return router.push({ pathname: "/nutrition", params: { add: "1" } });
+  const openSheet = (id: "weight" | "water" | "checkin") => () => {
     setVal("");
     setSheet(id);
   };
+  const api_ = { weight: openSheet("weight"), water: openSheet("water"), checkin: openSheet("checkin") };
 
   const save = async () => {
     const n = Number(val.replace(",", "."));
@@ -101,40 +96,8 @@ export function QuickActions({ bottom }: { bottom: number }) {
   };
 
   return (
-    <>
-      {open ? <Pressable onPress={() => setOpen(false)} style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(10,4,9,0.45)" }} accessibilityLabel="Close quick actions" /> : null}
-      <RAnimated.View pointerEvents="box-none" style={[{ position: "absolute", right: 16, alignItems: "flex-end", gap: 10 }, dockPos]}>
-        {ACTIONS.map((act, i) => {
-          const k = ACTIONS.length - i;
-          return (
-            <Animated.View
-              key={act.id}
-              pointerEvents={open ? "auto" : "none"}
-              style={{ opacity: a, transform: [{ translateY: a.interpolate({ inputRange: [0, 1], outputRange: [12 * k, 0] }) }, { scale: a.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] }) }] }}
-            >
-              <Pressable onPress={() => pick(act.id)} accessibilityRole="button" style={[{ flexDirection: "row", alignItems: "center", gap: 10, height: 42, paddingLeft: 14, paddingRight: 16, borderRadius: radius.pill, backgroundColor: colors.surfaceOpaque, borderWidth: 1, borderColor: colors.lineSoft }, shadow.float]}>
-                <Ionicons name={act.icon} size={16} color={colors.pink} />
-                <Text style={{ fontSize: 14 }}>{act.label}</Text>
-              </Pressable>
-            </Animated.View>
-          );
-        })}
-        <Pressable
-          onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-            setOpen((v) => !v);
-          }}
-          accessibilityRole="button"
-          accessibilityLabel={open ? "Close quick actions" : "Quick actions"}
-          accessibilityState={{ expanded: open }}
-          style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: colors.pink, alignItems: "center", justifyContent: "center" }}
-        >
-          <Animated.View style={{ transform: [{ rotate: a.interpolate({ inputRange: [0, 1], outputRange: ["0deg", "45deg"] }) }] }}>
-            <Ionicons name="add" size={26} color={colors.onAccent} />
-          </Animated.View>
-        </Pressable>
-      </RAnimated.View>
-
+    <Ctx.Provider value={api_}>
+      {children}
       <Sheet
         visible={sheet === "weight" || sheet === "water"}
         onClose={() => setSheet(null)}
@@ -168,6 +131,6 @@ export function QuickActions({ bottom }: { bottom: number }) {
         ) : null}
       </Sheet>
       <CheckinSheet visible={sheet === "checkin"} onClose={() => setSheet(null)} seed={today.latest} onSaved={() => today.refetch()} />
-    </>
+    </Ctx.Provider>
   );
 }

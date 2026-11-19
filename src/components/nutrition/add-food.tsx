@@ -7,7 +7,7 @@
  * food). Picking a food opens the serving screen with a live nutrition preview.
  */
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Linking, Platform, Pressable, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Linking, Platform, Pressable, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
@@ -263,10 +263,12 @@ function FavoritesTab({ onPick }: { onPick: (p: Picked) => void }) {
             <Pressable
               accessibilityLabel={`Remove ${f.foodName} from favorites`}
               hitSlop={8}
-              onPress={async () => {
-                setItems((cur) => cur?.filter((x) => x.id !== f.id) ?? null);
-                await api.food.removeFavorite(f.id).catch(() => void reload());
-              }}
+              onPress={() =>
+                Alert.alert("Remove favorite?", `${f.foodName} will be removed from your favorites.`, [{ text: "Cancel", style: "cancel" }, { text: "Remove", style: "destructive", onPress: async () => {
+                  setItems((cur) => cur?.filter((x) => x.id !== f.id) ?? null);
+                  await api.food.removeFavorite(f.id).catch(() => void reload());
+                } }])
+              }
             >
               <Ionicons name="star" size={18} color={colors.amber} />
             </Pressable>
@@ -350,10 +352,12 @@ function ManualTab({ meal, date, photo, onClearPhoto, onLogged, onPickCustom }: 
                 <Pressable
                   hitSlop={8}
                   accessibilityLabel={`Delete ${food.name}`}
-                  onPress={async () => {
-                    setMine((cur) => cur?.filter((x) => x.id !== food.id) ?? null);
-                    await api.food.deleteCustom(food.sourceId).catch(() => void reload());
-                  }}
+                  onPress={() =>
+                    Alert.alert("Delete custom food?", `${food.name} will be deleted. Past log entries keep their numbers.`, [{ text: "Cancel", style: "cancel" }, { text: "Delete", style: "destructive", onPress: async () => {
+                      setMine((cur) => cur?.filter((x) => x.id !== food.id) ?? null);
+                      await api.food.deleteCustom(food.sourceId).catch(() => void reload());
+                    } }])
+                  }
                 >
                   <Ionicons name="remove-circle-outline" size={20} color={colors.textTertiary} />
                 </Pressable>
