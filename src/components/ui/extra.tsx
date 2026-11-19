@@ -26,6 +26,7 @@ import { motion } from "@/lib/motion";
 import { Label, Text } from "./text";
 import { SoftSurface, RecessedSurface, RaisedSurface } from "./surface";
 import { Button } from "./controls";
+import { ScrubTabs } from "./scrub-tabs";
 
 /** Page header with back chevron, used by every pushed screen. */
 export function PageHeader({ title, subtitle, back = true, right }: { title: string; subtitle?: string; back?: boolean; right?: ReactNode }) {
@@ -330,35 +331,13 @@ export function SliderBar({
   );
 }
 
-/** Pill tab row that scrolls horizontally — used for sub-navigation and filters. */
 /**
  * PillTabs — a single horizontally scrolling row of filter pills (never wraps).
- * `bleed` lets the row scroll edge to edge past the page margin instead of
- * being clipped at it; pills are 34pt tall with a 44pt touch area.
+ * Same interaction model as the tab dock (sliding indicator, hold-and-scrub).
+ * `bleed` lets the row scroll edge to edge past the page margin.
  */
 export function PillTabs<T extends string>({ value, options, onChange, bleed }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void; bleed?: boolean }) {
-  return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={bleed ? { marginHorizontal: -space.page } : undefined} contentContainerStyle={{ gap: 8, paddingVertical: 2, paddingHorizontal: bleed ? space.page : 0 }}>
-      {options.map((o) => {
-        const active = o.value === value;
-        return (
-          <Pressable
-            key={o.value}
-            hitSlop={{ top: 5, bottom: 5 }}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: active }}
-            onPress={() => {
-              Haptics.selectionAsync().catch(() => {});
-              onChange(o.value);
-            }}
-            style={{ paddingHorizontal: 14, height: 34, borderRadius: radius.pill, justifyContent: "center", backgroundColor: active ? colors.btnWhite : colors.surface, borderWidth: 1, borderColor: active ? "transparent" : colors.lineSoft }}
-          >
-            <Text style={{ fontSize: 13, fontFamily: fonts.semibold, color: active ? colors.btnWhiteInk : colors.textSecondary }}>{o.label}</Text>
-          </Pressable>
-        );
-      })}
-    </ScrollView>
-  );
+  return <ScrubTabs variant="pill" value={value} options={options} onChange={onChange} bleed={bleed} />;
 }
 
 export function Toggle({ value, onChange, disabled }: { value: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
@@ -417,18 +396,7 @@ export function Card({ children, style, title, variant = "default" }: { children
 }
 
 export function Segmented<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void }) {
-  return (
-    <RecessedSurface radiusSize="pill" style={{ flexDirection: "row", padding: 4 }}>
-      {options.map((o) => {
-        const active = o.value === value;
-        return (
-          <Pressable key={o.value} onPress={() => onChange(o.value)} style={{ flex: 1, height: 36, borderRadius: radius.pill, alignItems: "center", justifyContent: "center", backgroundColor: active ? colors.btnWhite : "transparent" }}>
-            <Text style={{ fontSize: 13, color: active ? colors.btnWhiteInk : colors.textSecondary }}>{o.label}</Text>
-          </Pressable>
-        );
-      })}
-    </RecessedSurface>
-  );
+  return <ScrubTabs variant="segmented" value={value} options={options} onChange={onChange} />;
 }
 
 /**
