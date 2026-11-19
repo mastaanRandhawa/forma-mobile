@@ -7,7 +7,7 @@
  * and persists it per session so nothing is lost on navigation or app kill.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, AppState, Easing, Image, Pressable, ScrollView, Vibration, View } from "react-native";
+import { Alert, Animated, AppState, Easing, Image, Pressable, ScrollView, Vibration, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
@@ -421,6 +421,15 @@ export default function ActiveWorkout() {
     }
   };
 
+  /** Ask before anything that changes or discards the session. */
+  const ask = (title: string, message: string, label: string, run: () => void, destructive = false) =>
+    Alert.alert(title, message, [{ text: "Cancel", style: "cancel" }, { text: label, style: destructive ? "destructive" : "default", onPress: run }]);
+  /** Menu rows close the menu first, then act — two modals can't swap in one frame. */
+  const fromMenu = (fn: () => void) => () => {
+    setSheet(null);
+    setTimeout(fn, 280);
+  };
+
   const defer = (perf: ExercisePerformance, reason: string) => {
     if (!session) return;
     patchUI((c) => {
@@ -625,18 +634,18 @@ export default function ActiveWorkout() {
           </View>
         ) : null}
 
-        {current && !resting ? <SetList perf={current} ui={ui} units={units} history={history[current.exercise.slug] ?? null} onToggle={(r) => toggleRow(current, r)} onDelete={(r) => deleteRow(current, r)} /> : null}
+        {current && !resting ? <SetList perf={current} ui={ui} units={units} history={history[current.exercise.slug] ?? null} onToggle={(r) => (r.done ? ask("Undo this set?", "It will be removed from your log; the numbers stay as a draft.", "Undo set", () => toggleRow(current, r)) : toggleRow(current, r))} onDelete={(r) => ask("Delete this set?", `Set ${r.n} will be removed from ${current.exercise.name}.`, "Delete", () => deleteRow(current, r), true)} /> : null}
 
       </ScrollView>
 
       {/* workout menu — everything that isn't "log the next set" lives here */}
       <Sheet visible={sheet === "menu"} onClose={() => setSheet(null)} title="Workout options" eyebrow={session.name}>
-        <SettingRow icon="list" title="Overview" hint="All exercises, reorder, skip or do later" onPress={() => setSheet("overview")} />
-        {current ? <SettingRow icon="information-circle-outline" title="How to do this exercise" onPress={() => setSheet("howto")} /> : null}
-        {current ? <SettingRow icon="swap-horizontal" title="Replace this exercise" onPress={() => { setSwapFor(current); setSheet("swap"); }} /> : null}
-        {current ? <SettingRow icon="time-outline" title="Machine busy — do it later" onPress={() => { setSheet(null); defer(current, "machine busy"); }} /> : null}
-        <SettingRow icon={ui.paused ? "play" : "pause"} title={ui.paused ? "Resume workout" : "Pause workout"} onPress={() => { setSheet(null); togglePause(); }} />
-        <SettingRow icon="exit-outline" title="End workout" onPress={() => setSheet("end")} />
+        <SettingRow icon="list" title="Overview" hint="All exercises, reorder, skip or do later" onPress={fromMenu(() => setSheet("overview"))} />
+        {current ? <SettingRow icon="information-circle-outline" title="How to do this exercise" onPress={fromMenu(() => setSheet("howto"))} /> : null}
+        {current ? <SettingRow icon="swap-horizontal" title="Replace this exercise" onPress={fromMenu(() => { setSwapFor(current); setSheet("swap"); })} /> : null}
+        {current ? <SettingRow icon="time-outline" title="Machine busy — do it later" onPress={fromMenu(() => ask("Move to later?", `${current.exercise.name} goes to the end of today's session.`, "Do it later", () => defer(current, "machine busy")))} /> : null}
+        <SettingRow icon={ui.paused ? "play" : "pause"} title={ui.paused ? "Resume workout" : "Pause workout"} onPress={fromMenu(togglePause)} />
+        <SettingRow icon="exit-outline" title="End workout" onPress={fromMenu(() => setSheet("end"))} />
       </Sheet>
 
       {/* overview */}
@@ -659,10 +668,10 @@ export default function ActiveWorkout() {
                   </View>
                 </Pressable>
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                  {ph !== "skipped" && ph !== "done" && ph !== "deferred" ? <Chip label="Do later" onPress={() => defer(p, "do later")} /> : null}
+                  {ph !== "skipped" && ph !== "done" && ph !== "deferred" ? <Chip label="Do later" onPress={() => ask("Move to later?", `${p.exercise.name} goes to the end of today's session.`, "Do it later", () => defer(p, "do later"))} /> : null}
                   {ph === "deferred" ? <Chip label="Resume now" active onPress={() => resume(p)} /> : null}
                   {ph !== "skipped" ? <Chip label="Replace" onPress={() => { setSwapFor(p); setSheet("swap"); }} /> : null}
-                  {ph === "skipped" ? <Chip label="Add back" onPress={() => setSkip(p, false)} /> : ph !== "done" ? <Chip label="Skip" onPress={() => setSkip(p, true)} /> : null}
+                  {ph === "skipped" ? <Chip label="Add back" onPress={() => setSkip(p, false)} /> : ph !== "done" ? <Chip label="Skip" onPress={() => ask("Skip this exercise?", `${p.exercise.name} won't be counted today. You can add it back from the overview.`, "Skip", () => setSkip(p, true), true)} /> : null}
                 </View>
               </View>
             </View>
@@ -673,8 +682,8 @@ export default function ActiveWorkout() {
       </Sheet>
 
       <ExercisePicker visible={sheet === "add"} onClose={() => setSheet(null)} onPick={addExercise} />
-      <ExercisePicker visible={sheet === "swapLibrary"} title="Replace from library" onClose={() => setSheet(null)} onPick={(e) => swapFor && swapTo(swapFor, e.id, e.name)} />
-      <SwapSheet perf={sheet === "swap" ? swapFor : null} onClose={() => setSheet(null)} onPick={async (s) => { if (!swapFor) return; try { const found = await api.library.exercise(s.slug); await swapTo(swapFor, found.id, found.name); } catch (e) { toast.error(errorMessage(e as Error)); } }} onLibrary={() => setSheet("swapLibrary")} />
+      <ExercisePicker visible={sheet === "swapLibrary"} title="Replace from library" onClose={() => setSheet(null)} onPick={(e) => { if (!swapFor) return; const target = swapFor; ask("Replace exercise?", `${target.exercise.name} will be replaced by ${e.name} for today only.`, "Replace", () => void swapTo(target, e.id, e.name)); }} />
+      <SwapSheet perf={sheet === "swap" ? swapFor : null} onClose={() => setSheet(null)} onPick={(s) => { if (!swapFor) return; const target = swapFor; ask("Replace exercise?", `${target.exercise.name} will be replaced by ${s.name} for today only.`, "Replace", async () => { try { const found = await api.library.exercise(s.slug); await swapTo(target, found.id, found.name); } catch (e) { toast.error(errorMessage(e as Error)); } }); }} onLibrary={() => setSheet("swapLibrary")} />
       <ExerciseDetailSheet slug={sheet === "howto" && current ? current.exercise.slug : null} preview={current?.exercise} onClose={() => setSheet(null)} />
 
       {/* leave / finish */}
@@ -684,7 +693,7 @@ export default function ActiveWorkout() {
         {!prog.setsDone ? <Text variant="meta" color="tertiary">Log at least one set to save this workout.</Text> : null}
         <Button label="Continue workout" variant="ghost" onPress={() => setSheet(null)} />
         <Button label="Pause & exit — resume later" variant="ghost" onPress={pauseAndExit} />
-        <Pressable onPress={discard} disabled={busy === "discard"} style={{ alignItems: "center", paddingVertical: 12 }} accessibilityRole="button">
+        <Pressable onPress={() => ask("Discard this workout?", "Everything logged in this session will be deleted. This can't be undone.", "Discard", discard, true)} disabled={busy === "discard"} style={{ alignItems: "center", paddingVertical: 12 }} accessibilityRole="button">
           <Text style={{ color: colors.danger }}>{busy === "discard" ? "Discarding…" : "Discard without saving"}</Text>
         </Pressable>
       </Sheet>

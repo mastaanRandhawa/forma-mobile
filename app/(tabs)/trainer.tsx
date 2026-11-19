@@ -241,7 +241,7 @@ export default function TrainerTab() {
           {PRESETS.map((pr) => {
             const on = SLIDERS.every((sl) => Math.abs(Number(trainer.data?.[sl.key] ?? 0.5) - pr.v[sl.key]) < 0.04);
             return (
-              <Pressable key={pr.id} onPress={() => patchTrainer(pr.v, true)} accessibilityRole="button" accessibilityState={{ selected: on }} style={{ flexDirection: "row", alignItems: "center", gap: 12, minHeight: 56, paddingHorizontal: 14, paddingVertical: 10, borderRadius: radius.medium, borderWidth: 1, borderColor: on ? colors.pink : "transparent", backgroundColor: on ? "rgba(213,26,122,0.12)" : colors.surface }}>
+              <Pressable key={pr.id} onPress={() => Alert.alert(`Switch to ${pr.name}?`, `This changes all six coaching sliders. ${pr.line}`, [{ text: "Cancel", style: "cancel" }, { text: "Apply", onPress: () => patchTrainer(pr.v, true) }])} accessibilityRole="button" accessibilityState={{ selected: on }} style={{ flexDirection: "row", alignItems: "center", gap: 12, minHeight: 56, paddingHorizontal: 14, paddingVertical: 10, borderRadius: radius.medium, borderWidth: 1, borderColor: on ? colors.pink : "transparent", backgroundColor: on ? "rgba(213,26,122,0.12)" : colors.surface }}>
                 <Ionicons name={pr.icon} size={20} color={on ? colors.pinkSoft : colors.textSecondary} />
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontFamily: fonts.semibold }}>{pr.name}</Text>

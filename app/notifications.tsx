@@ -2,7 +2,7 @@
  * Notification inbox (mobile-only — the website surfaces these as toasts).
  * Pull to refresh, tap to open (marks read), swipe left to delete.
  */
-import { Pressable, View } from "react-native";
+import { Alert, Pressable, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
@@ -54,7 +54,9 @@ export default function Notifications() {
     }
     if (i.deepLink?.startsWith("/")) router.push(toRoute(i.deepLink) as never);
   };
-  const remove = async (i: Item) => {
+  const remove = (i: Item) =>
+    Alert.alert("Delete notification?", "It will be removed from your list.", [{ text: "Cancel", style: "cancel" }, { text: "Delete", style: "destructive", onPress: () => void doRemove(i) }]);
+  const doRemove = async (i: Item) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     patch((l) => l.filter((x) => x.id !== i.id));
     try {

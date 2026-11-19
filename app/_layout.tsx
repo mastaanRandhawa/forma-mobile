@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { LogBox } from "react-native";
+import "@/lib/alert-web";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { DefaultTheme, ThemeProvider as NavThemeProvider } from "expo-router/react-navigation";
 import { StatusBar } from "expo-status-bar";

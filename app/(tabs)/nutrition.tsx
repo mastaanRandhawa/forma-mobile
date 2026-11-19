@@ -247,7 +247,7 @@ function EntryRow({ e, onEdit, onDelete }: { e: FoodLogEntry; onEdit: () => void
       friction={2}
       rightThreshold={60}
       overshootRight={false}
-      renderRightActions={(prog) => <DeleteAction prog={prog} name={e.foodName} onDelete={onDelete} />}
+      renderRightActions={(prog) => <DeleteAction prog={prog} name={e.foodName} onDelete={() => Alert.alert("Remove this food?", `${e.foodName} will be removed from your log.`, [{ text: "Cancel", style: "cancel" }, { text: "Remove", style: "destructive", onPress: onDelete }])} />}
       onSwipeableOpen={() => Haptics.selectionAsync().catch(() => {})}
     >
       <Pressable onPress={onEdit} onLongPress={() => Alert.alert(e.foodName, undefined, [{ text: "Cancel", style: "cancel" }, { text: "Edit", onPress: onEdit }, { text: "Delete", style: "destructive", onPress: onDelete }])} accessibilityHint="Tap to edit, swipe left to delete" style={{ flexDirection: "row", alignItems: "center", gap: 10, minHeight: 52, paddingVertical: 8 }}>
@@ -295,7 +295,7 @@ function EditEntrySheet({ entry, onClose, onUpdated }: { entry: FoodLogEntry | n
       footer={
         <>
           <Button label="Save changes" loading={busy === "save"} onPress={() => run("save")} />
-          <Pressable onPress={() => run("del")} disabled={!!busy} style={{ alignItems: "center", paddingVertical: 8 }}><Text style={{ color: colors.danger }}>{busy === "del" ? "Deleting…" : "Delete entry"}</Text></Pressable>
+          <Pressable onPress={() => Alert.alert("Delete this entry?", `${entry?.foodName ?? "This food"} will be removed from your log.`, [{ text: "Cancel", style: "cancel" }, { text: "Delete", style: "destructive", onPress: () => void run("del") }])} disabled={!!busy} style={{ alignItems: "center", paddingVertical: 8 }}><Text style={{ color: colors.danger }}>{busy === "del" ? "Deleting…" : "Delete entry"}</Text></Pressable>
         </>
       }
     >
