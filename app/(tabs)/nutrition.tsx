@@ -1,4 +1,5 @@
 import { ProfileMenu } from "@/components/profile-menu";
+import { FadeSwap } from "@/components/ui/loading";
 import { TourTarget } from "@/components/tour/tour";
 /**
  * Nutrition (website: components/nutrition/FoodLog.tsx) — the food logger.
@@ -105,7 +106,7 @@ export default function Nutrition() {
   const total = d ? Object.values(d.meals).reduce((n, l) => n + (l?.length ?? 0), 0) : 0;
 
   return (
-    <Screen tabs refreshing={day.loading && !day.initialLoading} onRefresh={day.refetch}>
+    <Screen tabs onRefresh={day.reload}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <Text variant="title">Nutrition</Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
@@ -131,11 +132,11 @@ export default function Nutrition() {
             </Pressable>
           </View>
 
-          {day.initialLoading && !d ? <><Skel h={190} r={32} /><Skel h={140} r={32} /></> : null}
+          {day.initialLoading && !d ? <FadeSwap id="load"><Skel h={330} r={32} /><View style={{ height: 14 }} /><Skel h={140} r={32} /></FadeSwap> : null}
           {day.error && !d ? <ErrorState message={errorMessage(day.error)} onRetry={day.refetch} /> : null}
 
           {d ? (
-            <>
+            <FadeSwap id="ready" style={{ gap: 14 }}>
               <DaySummary day={d} onAdjust={() => setGoalOpen(true)} />
 
               <View style={{ gap: 4 }}>
@@ -172,7 +173,7 @@ export default function Nutrition() {
               <Text variant="meta" color="tertiary" style={{ textAlign: "center" }}>
                 Food data from <Text variant="meta" color="secondary" onPress={() => Linking.openURL("https://world.openfoodfacts.org")}>Open Food Facts</Text> (ODbL) and <Text variant="meta" color="secondary" onPress={() => Linking.openURL("https://fdc.nal.usda.gov")}>USDA FoodData Central</Text>, with Nutritionix and Edamam as fallbacks.
               </Text>
-            </>
+            </FadeSwap>
           ) : null}
         </View>
       ) : (

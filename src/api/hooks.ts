@@ -16,6 +16,8 @@ export interface Resource<D> {
   /** true only on the very first load (not on refetch / background revalidation) */
   initialLoading: boolean;
   refetch: () => void;
+  /** awaitable background refresh for pull-to-refresh (no skeleton flash; rejects on failure) */
+  reload: () => Promise<void>;
   /** write a known-fresh value straight into state + cache (e.g. the object a
    *  mutation endpoint returns) so no follow-up GET is needed */
   mutate: (data: D) => void;
@@ -112,12 +114,28 @@ export function useResource<D>(key: string, fetcher: () => Promise<D>): Resource
     setError(null);
   }, []);
 
+  const reloadFn = useCallback(async () => {
+    const k = keyRef.current;
+    try {
+      const d = await fetcherRef.current();
+      if (keyRef.current !== k) return;
+      resourceCache.set(k, { data: d, at: Date.now() });
+      setData(d);
+      setError(null);
+      seenRef.current = true;
+    } catch (e) {
+      throw e instanceof Error ? e : new Error(String(e));
+    }
+  }, []);
+
   return {
     data,
     error,
     loading,
     initialLoading: loading && !seenRef.current,
     refetch: () => run(false),
+    /** Awaitable background refresh (pull-to-refresh): no skeleton flash, rejects on failure. */
+    reload: reloadFn,
     mutate,
   };
 }

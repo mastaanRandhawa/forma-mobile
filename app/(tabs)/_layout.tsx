@@ -22,7 +22,7 @@ export default function TabsLayout() {
     <NavChromeProvider>
       <QuickLogProvider>
       <View style={{ flex: 1 }}>
-        <Tabs tabBar={(p) => <TabDock {...p} />} screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: "transparent" }, animation: "fade" }}>
+        <Tabs tabBar={(p) => <TabDock {...p} />} screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: "transparent" }, animation: "none" }}>
           <Tabs.Screen name="dashboard" />
           <Tabs.Screen name="workouts" />
           <Tabs.Screen name="nutrition" />

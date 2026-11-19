@@ -96,7 +96,7 @@ function StoreScreen() {
   if (wallet.initialLoading) return <Screen><PageHeader title="Store" /><PageSkeleton /></Screen>;
 
   return (
-    <Screen>
+    <Screen onRefresh={() => Promise.all([wallet.reload(), hist.reload()])}>
       <PageHeader title="The store" right={<View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}><Ionicons name="logo-bitcoin" size={16} color={colors.amber} /><Num size={18}>{balance.toLocaleString()}</Num></View>} />
       <Card>
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>

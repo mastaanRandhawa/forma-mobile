@@ -99,7 +99,7 @@ function GoalsScreen() {
   };
 
   return (
-    <Screen refreshing={goals.loading && !goals.initialLoading} onRefresh={goals.refetch}>
+    <Screen onRefresh={goals.reload}>
       <PageHeader title="Goals" subtitle="What you're working toward." right={<Chip label="+ New goal" active onPress={() => setAdding(true)} />} />
       {goals.initialLoading ? [0, 1, 2].map((i) => <Skel key={i} h={84} r={32} style={{ marginBottom: 10 }} />) : goals.error && !goals.data ? (
         <ErrorState message={errorMessage(goals.error)} onRetry={goals.refetch} />

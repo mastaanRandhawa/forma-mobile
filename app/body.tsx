@@ -51,7 +51,7 @@ function BodyScreen() {
   const legend = mode === "fatigue" ? [["Recovered", FAT[0]], ["Moderate", FAT[3]], ["Fatigued", FAT[5]]] : [["Rest", ACT[0]], ["Light", ACT[2]], ["Heavy", ACT[4]]];
 
   return (
-    <Screen refreshing={map.loading && !map.initialLoading} onRefresh={() => { map.refetch(); bal.refetch(); today.refetch(); }}>
+    <Screen onRefresh={() => Promise.all([map.reload(), bal.reload(), today.reload()])}>
       <PageHeader title="Muscle map" subtitle={mode === "fatigue" ? "How recovered each muscle is, from your last 7 days." : "Where your training load landed."} />
       <View style={{ gap: 10 }}>
         <Segmented value={mode} onChange={setMode} options={[{ value: "activation", label: "Activation" }, { value: "fatigue", label: "Fatigue" }]} />

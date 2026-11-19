@@ -78,11 +78,11 @@ function AuthGate() {
   }, [status, user, segments, router]);
 
   return (
-    <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "transparent" }, animation: "fade", animationDuration: 280 }}>
+    <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "transparent" }, animation: "none" }}>
       <Stack.Screen name="(auth)" />
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="onboarding" options={{ gestureEnabled: false }} />
-      <Stack.Screen name="workout" options={{ presentation: "fullScreenModal" }} />
+      <Stack.Screen name="workout" options={{ presentation: "fullScreenModal", animation: "slide_from_bottom", animationDuration: 260 }} />
     </Stack>
   );
 }

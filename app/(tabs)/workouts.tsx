@@ -24,6 +24,7 @@ import { useDevicePrefs } from "@/lib/device-prefs";
 import { useActiveSession } from "@/components/workout-bar";
 import { Screen } from "@/components/ui/screen";
 import { Button, Chip, SectionHeading } from "@/components/ui/controls";
+import { FadeSwap, ListFooter, SkelRows, useGrowingList, useIncremental } from "@/components/ui/loading";
 import { TourTarget } from "@/components/tour/tour";
 import { ActionMenu, Card, EmptyState, ErrorState, PillTabs, Segmented, Sheet, Skel, type MenuAction } from "@/components/ui/extra";
 import { ExerciseThumb } from "@/components/exercise";
@@ -81,15 +82,18 @@ export default function Workouts() {
 
   const today = (planned.data ?? []).find((w) => !w.scheduledDate || new Date(w.scheduledDate).toDateString() === new Date().toDateString()) ?? planned.data?.[0] ?? null;
   const rows = useMemo(() => (templates.data ?? []).map(workoutToRow), [templates.data]);
+  // long lists load a page at a time as you scroll
+  const pagedHist = useGrowingList<WorkoutSession>("session-history-pg", (take) => api.sessions.list({ status: "completed", take }), 20);
+  const myPaged = useIncremental(rows, 8);
   const recommended = useMemo(
     () => recommendTemplates({ goal: user?.fitnessGoal ? GOAL_LABELS[user.fitnessGoal].toLowerCase() : null, experience: user?.experienceLevel ?? null, environment: user?.trainingLocation ?? null, equipment: [] }, [], 3).map(presetToRow),
     [user],
   );
   const sessions = useMemo(() => history.data ?? [], [history.data]);
 
-  const refreshAll = () => {
+  const refreshAll = async () => {
     invalidateResource();
-    [planned, templates, history, active, programs].forEach((r) => r.refetch());
+    await Promise.all([planned, templates, history, active, programs].map((r) => r.reload()).concat(pagedHist.reload()));
   };
 
   const run = async (key: string, fn: () => Promise<unknown>) => {
@@ -186,10 +190,11 @@ export default function Workouts() {
   }, [sessions, planned.data, month, device.preferredDays]);
 
   const filteredPresets = WORKOUT_TEMPLATES.filter((t) => (category === "all" || t.category === category) && (diff === "all" || t.difficulty === diff));
+  const presetPaged = useIncremental(filteredPresets, 8);
   const prior = detail ? sessions.find((s) => s.name === detail.name && Date.parse(s.startedAt) < Date.parse(detail.startedAt)) : null;
 
   return (
-    <Screen tabs refreshing={false} onRefresh={refreshAll}>
+    <Screen tabs onRefresh={refreshAll} onEndReached={tab === "history" ? pagedHist.loadMore : tab === "templates" ? () => { myPaged.loadMore(); presetPaged.loadMore(); } : undefined}>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
         <Text variant="title">Train</Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
@@ -344,11 +349,14 @@ export default function Workouts() {
 
           <View>
             <SectionHeading title="All sessions" />
-            {history.initialLoading ? <View style={{ gap: 10 }}>{[0, 1, 2].map((i) => <Skel key={i} h={64} r={24} />)}</View> : history.error && !history.data ? <ErrorState message="Couldn't load history." onRetry={history.refetch} /> : sessions.length === 0 ? (
+            <FadeSwap id={pagedHist.initialLoading ? "load" : pagedHist.items.length ? "ready" : "empty"}>
+            {pagedHist.initialLoading ? <SkelRows count={5} thumb={40} /> : pagedHist.error && !pagedHist.items.length ? <ErrorState message="Couldn't load history." onRetry={pagedHist.refetch} /> : pagedHist.items.length === 0 ? (
               <EmptyState title="No sessions yet" body="Your finished workouts land here — volume, duration and any PRs." action="Start today's workout" onAction={() => setTab("today")} />
             ) : (
-              <Card variant="compact" style={{ marginBottom: 0 }}><View style={{ gap: 4 }}>{sessions.map((s) => <SessionRow key={s.id} s={s} units={units} onPress={() => setDetail(s)} />)}</View></Card>
+              <Card variant="compact" style={{ marginBottom: 0 }}><View style={{ gap: 4 }}>{pagedHist.items.map((s) => <SessionRow key={s.id} s={s} units={units} onPress={() => setDetail(s)} />)}</View></Card>
             )}
+            </FadeSwap>
+            <ListFooter loading={pagedHist.loadingMore} done={!pagedHist.hasMore && pagedHist.items.length > 20} label="That's your full history" />
           </View>
         </View>
       )}
@@ -360,7 +368,7 @@ export default function Workouts() {
             {templates.initialLoading ? <Skel h={110} r={24} /> : rows.length === 0 ? (
               <EmptyState title="No templates of your own yet" body="Build one from scratch, or save a copy of a prebuilt workout below." action="Create workout" onAction={() => router.push("/workout/builder")} />
             ) : (
-              <View style={{ gap: 12 }}>{rows.map((r) => <WorkoutCard key={r.id} row={r} busy={busy === `start:${r.id}`} onPress={() => setPreview(r)} onStart={() => startRow(r)} onMore={() => openMenu(r)} />)}</View>
+              <View style={{ gap: 12 }}>{myPaged.visible.map((r) => <WorkoutCard key={r.id} row={r} busy={busy === `start:${r.id}`} onPress={() => setPreview(r)} onStart={() => startRow(r)} onMore={() => openMenu(r)} />)}{myPaged.hasMore ? <ListFooter loading /> : null}</View>
             )}
           </View>
 
@@ -373,7 +381,7 @@ export default function Workouts() {
             {filteredPresets.length === 0 ? (
               <EmptyState title="Nothing matches those filters" body="Loosen a filter to see more prebuilt workouts." action="Clear filters" onAction={() => { setCategory("all"); setDiff("all"); }} />
             ) : (
-              <View style={{ gap: 12 }}>{filteredPresets.map((t) => <WorkoutCard key={t.id} row={presetToRow(t)} difficulty={t.difficulty} busy={busy === `start:${t.id}`} onPress={() => setPreview(presetToRow(t))} onStart={() => startRow(presetToRow(t))} onMore={() => openMenu(presetToRow(t))} />)}</View>
+              <View style={{ gap: 12 }}>{presetPaged.visible.map((t) => <WorkoutCard key={t.id} row={presetToRow(t)} difficulty={t.difficulty} busy={busy === `start:${t.id}`} onPress={() => setPreview(presetToRow(t))} onStart={() => startRow(presetToRow(t))} onMore={() => openMenu(presetToRow(t))} />)}{presetPaged.hasMore ? <ListFooter loading /> : null}</View>
             )}
             <Text variant="meta" color="tertiary" style={{ textAlign: "center", marginTop: 16 }}>Prebuilt workouts are starting points — save a copy to make one your own.</Text>
           </View>

@@ -12,6 +12,7 @@ import { errorMessage, invalidateResource, useNotifications } from "@/api/hooks"
 import type { NotificationList } from "@/api/types";
 import { useTheme } from "@/theme/theme-provider";
 import { colors, radius } from "@/theme/tokens";
+import { ListFooter, useIncremental } from "@/components/ui/loading";
 import { Screen } from "@/components/ui/screen";
 import { Chip } from "@/components/ui/controls";
 import { EmptyState, ErrorState, PageHeader, PageSkeleton } from "@/components/ui/extra";
@@ -40,6 +41,7 @@ export default function Notifications() {
   const router = useRouter();
   const n = useNotifications();
   const items = n.data?.items ?? [];
+  const pg = useIncremental(items, 15);
 
   const patch = (fn: (l: Item[]) => Item[]) => {
     if (!n.data) return;
@@ -72,8 +74,8 @@ export default function Notifications() {
   };
 
   if (n.initialLoading) return <Screen><PageHeader title="Notifications" /><PageSkeleton /></Screen>;
-  const today = items.filter((i) => new Date(i.createdAt).toDateString() === new Date().toDateString());
-  const earlier = items.filter((i) => !today.includes(i));
+  const today = pg.visible.filter((i) => new Date(i.createdAt).toDateString() === new Date().toDateString());
+  const earlier = pg.visible.filter((i) => !today.includes(i));
 
   const row = (i: Item) => (
     <ReanimatedSwipeable
@@ -104,12 +106,13 @@ export default function Notifications() {
   );
 
   return (
-    <Screen refreshing={n.loading && !n.initialLoading} onRefresh={n.refetch}>
+    <Screen onRefresh={n.reload} onEndReached={pg.loadMore}>
       <PageHeader title="Notifications" right={items.some((i) => !i.readAt) ? <Chip label="Mark all read" onPress={markAll} /> : undefined} />
       {n.error && !n.data ? <ErrorState message={errorMessage(n.error)} onRetry={n.refetch} /> : null}
       {!n.error && items.length === 0 ? <EmptyState title="You're all caught up" body="Reminders, trainer check-ins and milestones show up here." /> : null}
       {today.length ? <><Label style={{ marginBottom: 8 }}>TODAY</Label>{today.map(row)}</> : null}
       {earlier.length ? <><Label style={{ marginBottom: 8, marginTop: today.length ? 8 : 0 }}>EARLIER</Label>{earlier.map(row)}</> : null}
+      <ListFooter loading={pg.hasMore} />
       {items.length ? <Text variant="meta" color="tertiary" style={{ textAlign: "center", marginTop: 4 }}>Swipe left on a notification to delete it.</Text> : null}
     </Screen>
   );

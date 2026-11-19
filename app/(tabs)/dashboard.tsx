@@ -74,9 +74,9 @@ export default function Dashboard() {
   const [generating, setGenerating] = useState(false);
   const [dismissed, setDismissed] = useState<string | null>(null);
 
-  const refresh = () => {
+  const refresh = async () => {
     invalidateResource();
-    [dash, hist, goals, readiness, cons, planned, checkins, active].forEach((r) => r.refetch());
+    await Promise.all([dash, hist, goals, readiness, cons, planned, checkins, active].map((r) => r.reload()));
   };
 
   const sessions = useMemo(() => hist.data ?? [], [hist.data]);
@@ -198,7 +198,7 @@ export default function Dashboard() {
 
   return (
     <View style={{ flex: 1 }}>
-      <Screen tabs refreshing={dash.loading && !dash.initialLoading} onRefresh={refresh}>
+      <Screen tabs onRefresh={refresh}>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
           <View style={{ flex: 1, paddingRight: 12 }}>
             <Text variant="title" numberOfLines={1}>{d?.greeting ?? partOfDay()}{(d?.user?.name ?? user?.name) ? `, ${(d?.user?.name ?? user?.name ?? "").split(" ")[0]}` : ""}</Text>
