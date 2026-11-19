@@ -176,7 +176,7 @@ export function SectionHeading({ title, action, onAction }: { title: string; act
   useTheme();
   return (
     <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10, marginTop: 8 }}>
-      <Text variant="heading">{title}</Text>
+      <Text variant="section">{title}</Text>
       {action ? (
         <PressScale onPress={onAction} hitSlop={10} to={0.94}>
           <Text variant="meta" color="pink">{action}</Text>

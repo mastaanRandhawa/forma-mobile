@@ -111,7 +111,18 @@ export const radius: Record<"small" | "medium" | "large" | "xl" | "shell" | "pil
   pill: 999,
 };
 
-export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 20, xxl: 28, huge: 40 } as const;
+/**
+ * Spacing scale (4pt grid). `page` is the one horizontal page margin every
+ * screen uses; `card` are the three card paddings (see `Card` variants).
+ */
+export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 20, xxl: 28, huge: 40, page: 20 } as const;
+export const cardPad = { compact: 16, default: 20, hero: 24 } as const;
+
+/** One icon scale (Ionicons, outline by default; filled only for an active/selected state). */
+export const iconSize = { sm: 16, md: 20, lg: 24 } as const;
+
+/** Minimum interactive target, in points. */
+export const HIT = 44;
 
 /** Font families loaded in the root layout (Urbanist for text, Space Grotesk for numbers). */
 export const fonts = {
@@ -129,9 +140,13 @@ export const type = {
   display: { fontFamily: fonts.light, fontSize: 40, lineHeight: 44, letterSpacing: -0.8 },
   title: { fontFamily: fonts.light, fontSize: 28, lineHeight: 32, letterSpacing: -0.4 },
   heading: { fontFamily: fonts.medium, fontSize: 20, lineHeight: 26 },
+  /** section header on a screen */
+  section: { fontFamily: fonts.medium, fontSize: 18, lineHeight: 24, letterSpacing: -0.1 },
+  /** title inside a card */
+  cardTitle: { fontFamily: fonts.medium, fontSize: 16, lineHeight: 22 },
   bodyLg: { fontFamily: fonts.regular, fontSize: 16, lineHeight: 23 },
   body: { fontFamily: fonts.regular, fontSize: 15, lineHeight: 21 },
-  meta: { fontFamily: fonts.semibold, fontSize: 12, lineHeight: 16, letterSpacing: 0.3 },
+  meta: { fontFamily: fonts.semibold, fontSize: 12.5, lineHeight: 17, letterSpacing: 0.15 },
   numeral: { fontFamily: fonts.num, fontSize: 28, lineHeight: 28, letterSpacing: -0.6 },
 } satisfies Record<string, TextStyle>;
 
