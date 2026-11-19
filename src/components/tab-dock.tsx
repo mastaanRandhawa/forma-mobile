@@ -31,7 +31,10 @@ import { motion } from "@/lib/motion";
 import { useTheme } from "@/theme/theme-provider";
 import { withAlpha } from "@/lib/color";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
+import { DOCK_FULL, DOCK_ITEM_FULL, DOCK_ITEM_MIN, DOCK_MIN, DOCK_PAD, dockBottom } from "./dock-metrics";
 import { useNavChrome } from "./nav-chrome";
+
+export { DOCK_FULL, DOCK_MIN };
 
 type Meta = { label: string; icon: keyof typeof Ionicons.glyphMap; active: keyof typeof Ionicons.glyphMap };
 export const TABS: Record<string, Meta> = {
@@ -41,15 +44,12 @@ export const TABS: Record<string, Meta> = {
   trainer: { label: "Coach", icon: "chatbubble-ellipses-outline", active: "chatbubble-ellipses" },
 };
 
-const PAD = 6;
-const ITEM_FULL = 52;
-const ITEM_MIN = 44;
+const PAD = DOCK_PAD;
+const ITEM_FULL = DOCK_ITEM_FULL;
+const ITEM_MIN = DOCK_ITEM_MIN;
 const SLOT_MIN = 56;
 export const PLUS = 52;
 export const GAP = 12;
-/** height of the pill when full / minimized — also used to place floating accessories */
-export const DOCK_FULL = ITEM_FULL + PAD * 2;
-export const DOCK_MIN = ITEM_MIN + PAD * 2;
 
 const spring = (to: number) => (motion.reduced ? withTiming(to, { duration: 0 }) : withSpring(to, { damping: 20, stiffness: 260, mass: 0.7 }));
 
@@ -58,7 +58,7 @@ function TabItem({ meta, index, active, pos, minimized, onPress, onKey }: { meta
   const near = useDerivedValue(() => Math.max(0, 1 - Math.abs(pos.value - index)));
   const box = useAnimatedStyle(() => ({ height: interpolate(minimized.value, [0, 1], [ITEM_FULL, ITEM_MIN]) }));
   const icon = useAnimatedStyle(() => ({ transform: [{ scale: 1 + near.value * 0.12 }, { translateY: -near.value * 1.5 * (1 - minimized.value) }] }));
-  const label = useAnimatedStyle(() => ({ opacity: (0.6 + near.value * 0.4) * (1 - minimized.value), height: 12 * (1 - minimized.value), marginTop: 2 * (1 - minimized.value) }));
+  const label = useAnimatedStyle(() => ({ opacity: (0.6 + near.value * 0.4) * (1 - minimized.value), height: 13 * (1 - minimized.value), marginTop: 2 * (1 - minimized.value) }));
   const tintOff = colors.textTertiary;
   const tintOn = colors.textPrimary;
   const tint = useAnimatedStyle(() => ({ color: interpolateColor(near.value, [0, 1], [tintOff, tintOn]) }));
@@ -84,7 +84,7 @@ function TabItem({ meta, index, active, pos, minimized, onPress, onKey }: { meta
           <Ionicons name={active ? meta.active : meta.icon} size={21} color={active ? colors.textPrimary : colors.textTertiary} />
         </Animated.View>
         <Animated.View style={[{ overflow: "hidden", justifyContent: "center" }, label]}>
-          <Animated.Text numberOfLines={1} style={[{ fontFamily: fonts.semibold, fontSize: 10.5, lineHeight: 12 }, tint]}>{meta.label}</Animated.Text>
+          <Animated.Text numberOfLines={1} style={[{ fontFamily: fonts.semibold, fontSize: 11, lineHeight: 13 }, tint]}>{meta.label}</Animated.Text>
         </Animated.View>
       </Animated.View>
     </PressScale>
@@ -182,7 +182,7 @@ export function TabDock({ state, navigateToTab }: BottomTabBarProps) {
   };
 
   return (
-    <View style={{ position: "absolute", left: 16, right: 16, bottom: Math.max(insets.bottom, 12) }} pointerEvents="box-none" onLayout={(e) => cw.set(e.nativeEvent.layout.width)}>
+    <View style={{ position: "absolute", left: 16, right: 16, bottom: dockBottom(insets.bottom) }} pointerEvents="box-none" onLayout={(e) => cw.set(e.nativeEvent.layout.width)}>
       <Animated.View style={[{ alignSelf: "flex-start", opacity: mounted ? 1 : 0 }, pillStyle, shadow.soft]}>
         <GlassSurface radiusSize="pill" style={{ flex: 1 }}>
           <GestureDetector gesture={pan}>

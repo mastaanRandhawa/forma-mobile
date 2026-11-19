@@ -7,7 +7,8 @@ import { useNavChrome } from "@/components/nav-chrome";
 import { useSharedValue } from "react-native-reanimated";
 import { ScrollYCtx } from "./quiet-context";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { colors } from "@/theme/tokens";
+import { colors, space } from "@/theme/tokens";
+import { contentBottomPad } from "@/components/dock-metrics";
 import { api } from "@/api/client";
 import { useResource } from "@/api/hooks";
 import type { WorkoutSession } from "@/api/types";
@@ -38,9 +39,9 @@ export function Screen({ children, scroll = true, tabs = false, contentStyle, re
   );
   const pad: ViewStyle = {
     paddingTop: insets.top + 12,
-    paddingHorizontal: 20,
+    paddingHorizontal: space.page,
     // leave room for the floating tab bar, plus the workout pill when one is running
-    paddingBottom: (tabs ? 110 + (bar.data ? 64 : 0) : 24) + insets.bottom,
+    paddingBottom: tabs ? contentBottomPad(insets.bottom, !!bar.data) : 24 + insets.bottom,
   };
   return (
     <View style={styles.root}>

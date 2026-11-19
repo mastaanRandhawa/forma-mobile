@@ -3,7 +3,8 @@ import { Tabs, useSegments } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { NavChromeProvider } from "@/components/nav-chrome";
 import { QuickActions } from "@/components/quick-actions";
-import { DOCK_FULL, TabDock } from "@/components/tab-dock";
+import { DOCK_FULL, dockBottom as dockBottomFor } from "@/components/dock-metrics";
+import { TabDock } from "@/components/tab-dock";
 import { WorkoutInProgressBar } from "@/components/workout-bar";
 
 /**
@@ -16,7 +17,7 @@ export default function TabsLayout() {
   const insets = useSafeAreaInsets();
   const segments = useSegments() as string[];
   const onTrainer = segments.includes("trainer");
-  const dockBottom = Math.max(insets.bottom, 12);
+  const dockBottom = dockBottomFor(insets.bottom);
   return (
     <NavChromeProvider>
       <View style={{ flex: 1 }}>
