@@ -20,7 +20,7 @@ import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient as SvgGradient, Path, Polyline, Rect, Stop, Line, Circle as SvgCircle, G } from "react-native-svg";
-import { cardPad, colors, fonts, radius, toneColor, type Tone } from "@/theme/tokens";
+import { cardPad, colors, fonts, radius, space, toneColor, type Tone } from "@/theme/tokens";
 import { PressScale } from "./pressable";
 import { motion } from "@/lib/motion";
 import { Label, Text } from "./text";
@@ -331,14 +331,20 @@ export function SliderBar({
 }
 
 /** Pill tab row that scrolls horizontally — used for sub-navigation and filters. */
-export function PillTabs<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void }) {
+/**
+ * PillTabs — a single horizontally scrolling row of filter pills (never wraps).
+ * `bleed` lets the row scroll edge to edge past the page margin instead of
+ * being clipped at it; pills are 34pt tall with a 44pt touch area.
+ */
+export function PillTabs<T extends string>({ value, options, onChange, bleed }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void; bleed?: boolean }) {
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 2 }}>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={bleed ? { marginHorizontal: -space.page } : undefined} contentContainerStyle={{ gap: 8, paddingVertical: 2, paddingHorizontal: bleed ? space.page : 0 }}>
       {options.map((o) => {
         const active = o.value === value;
         return (
           <Pressable
             key={o.value}
+            hitSlop={{ top: 5, bottom: 5 }}
             accessibilityRole="tab"
             accessibilityState={{ selected: active }}
             onPress={() => {

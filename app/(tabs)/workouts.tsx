@@ -1,10 +1,11 @@
 /**
- * Training hub (website: pages/Workouts.tsx) — Today / Calendar / History /
- * Templates. Every start goes through the daily check-in gate when the user
- * asked to be prompted before their first workout.
+ * Train — Today (the planned workout is the hero; Quick start sits beside it),
+ * History (calendar + scannable session list) and Templates (yours, then
+ * prebuilt). Create lives in the header. Every start goes through the daily
+ * check-in gate when the user asked to be prompted before their first workout.
  */
 import { useMemo, useState } from "react";
-import { Alert, Pressable, ScrollView, TextInput, View } from "react-native";
+import { Alert, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { api } from "@/api/client";
@@ -17,7 +18,7 @@ import { GOAL_LABELS } from "@/lib/profile-options";
 import { supersetLetter } from "@/lib/active-session";
 import { deleteTemplate, duplicateTemplate, fmtDuration, fromKg, presetToRow, renameTemplate, saveSessionAsTemplate, startFromRow, startQuick, startRepeat, unitLabel, workoutToRow, type TemplateRow, type Units } from "@/lib/workouts";
 import { useTheme } from "@/theme/theme-provider";
-import { colors, fonts, radius } from "@/theme/tokens";
+import { HIT, colors, fonts, iconSize, radius } from "@/theme/tokens";
 import { useCheckinGate } from "@/components/checkin";
 import { useDevicePrefs } from "@/lib/device-prefs";
 import { useActiveSession } from "@/components/workout-bar";
@@ -27,7 +28,8 @@ import { ActionMenu, Card, EmptyState, ErrorState, PillTabs, Segmented, Sheet, S
 import { ExerciseThumb } from "@/components/exercise";
 import { PopoverMenu } from "@/components/ui/popover";
 import { ProfileMenu } from "@/components/profile-menu";
-import { RaisedSurface } from "@/components/ui/surface";
+import { Fill } from "@/components/ui/gradient";
+import { PressScale } from "@/components/ui/pressable";
 import { toast } from "@/components/ui/toast";
 import { Label, Num, Text } from "@/components/ui/text";
 
@@ -214,143 +216,164 @@ export default function Workouts() {
       <Segmented value={tab} onChange={setTab} options={TABS.map((t) => ({ value: t.value, label: t.label }))} />
 
       {tab === "today" && (
-        <View style={{ marginTop: 16, gap: 14 }}>
+        <View style={{ marginTop: 20, gap: 20 }}>
           {week ? (
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 10, padding: 12, borderRadius: radius.small, backgroundColor: week.deload ? "rgba(131,233,244,0.10)" : colors.surface }}>
-              <Ionicons name="calendar-outline" size={16} color={week.deload ? colors.cyan : colors.textTertiary} />
-              <Text style={{ flex: 1 }} numberOfLines={2}>{week.name} · week {week.current}/{week.total}{week.deload ? " · deload week" : week.current < week.total && week.current % 4 === 3 ? " · deload next week" : ""}</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, minHeight: 44, borderRadius: radius.small, backgroundColor: week.deload ? "rgba(131,233,244,0.10)" : colors.surface }}>
+              <Ionicons name="calendar-outline" size={iconSize.sm} color={week.deload ? colors.cyan : colors.textTertiary} />
+              <Text variant="meta" color="secondary" style={{ flex: 1 }} numberOfLines={2}>{week.name} · week {week.current}/{week.total}{week.deload ? " · deload week" : week.current < week.total && week.current % 4 === 3 ? " · deload next week" : ""}</Text>
             </View>
           ) : null}
 
           {active.data ? (
-            <RaisedSurface radiusSize="large" style={{ padding: 18, gap: 8 }}>
+            <Card variant="hero" style={{ marginBottom: 0 }}>
               <Label style={{ color: colors.pinkSoft }}>WORKOUT IN PROGRESS</Label>
-              <Text variant="heading">{active.data.name}</Text>
-              <Button label="Resume workout" variant="accent" onPress={openActive} />
-            </RaisedSurface>
+              <Text variant="heading" style={{ marginTop: 6 }}>{active.data.name}</Text>
+              <View style={{ marginTop: 14 }}><Button label="Resume workout" onPress={openActive} /></View>
+            </Card>
           ) : null}
 
-          <RaisedSurface radiusSize="large" style={{ padding: 18, gap: 10 }}>
+          <Card variant={active.data ? "default" : "hero"} style={{ marginBottom: 0 }}>
             {planned.initialLoading ? (
-              <><Skel h={14} w="40%" /><Skel h={24} w="70%" /><Skel h={54} r={27} /></>
+              <View style={{ gap: 10 }}><Skel h={14} w="40%" /><Skel h={24} w="70%" /><Skel h={54} r={27} /></View>
             ) : planned.error && !planned.data ? (
               <ErrorState message="Couldn't load your plan." onRetry={planned.refetch} />
             ) : today ? (
               <>
                 <Label>{today.scheduledDate ? `SCHEDULED · ${fmtDate(today.scheduledDate).toUpperCase()}` : "YOUR PLAN"}</Label>
-                <Text variant="heading">{today.name}</Text>
-                <Text color="secondary">{[today.targetMuscleKeys.join(", ").toLowerCase(), `~${today.estimatedDurationMin ?? user?.sessionLengthTargetMin ?? 45} min`].filter(Boolean).join(" · ")}</Text>
-                {today.exercises.slice(0, 6).map((e) => (
-                  <View key={e.id} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                    <ExerciseThumb uri={e.exercise.imageStartUrl} name={e.exercise.name} size={30} />
-                    <Text variant="meta" color="secondary" numberOfLines={1} style={{ flex: 1 }}>{e.exercise.name}</Text>
-                    <Text variant="meta" color="tertiary">{e.targetSets} × {e.targetRepsMin ?? "—"}{e.targetRepsMax && e.targetRepsMax !== e.targetRepsMin ? `–${e.targetRepsMax}` : ""}{e.targetWeightKg ? ` · ${fromKg(e.targetWeightKg, units)} ${u}` : ""}</Text>
-                  </View>
-                ))}
-                {today.exercises.length > 6 ? <Text variant="meta" color="tertiary">+{today.exercises.length - 6} more</Text> : null}
-                <Button label={active.data ? "Resume workout" : "Start workout"} variant="accent" loading={busy === `start:${today.id}`} onPress={() => (active.data ? openActive() : startRow(workoutToRow(today)))} />
+                <Text variant="heading" style={{ marginTop: 6 }}>{today.name}</Text>
+                <Text color="secondary" style={{ marginTop: 2 }}>{[cap(today.targetMuscleKeys.slice(0, 3).join(" · ")), `~${today.estimatedDurationMin ?? user?.sessionLengthTargetMin ?? 45} min`, `${today.exercises.length} exercises`].filter(Boolean).join(" · ")}</Text>
+                <View style={{ marginTop: 14, gap: 10 }}>
+                  {today.exercises.slice(0, 5).map((e) => (
+                    <View key={e.id} style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                      <ExerciseThumb uri={e.exercise.imageStartUrl} name={e.exercise.name} size={36} />
+                      <Text numberOfLines={1} style={{ flex: 1 }}>{e.exercise.name}</Text>
+                      <View style={{ minWidth: 76, alignItems: "flex-end" }}>
+                        <Num size={14} color="secondary">{e.targetSets} × {e.targetRepsMin ?? "—"}{e.targetRepsMax && e.targetRepsMax !== e.targetRepsMin ? `–${e.targetRepsMax}` : ""}</Num>
+                        {e.targetWeightKg ? <Text variant="meta" color="tertiary">{fromKg(e.targetWeightKg, units)} {u}</Text> : null}
+                      </View>
+                    </View>
+                  ))}
+                  {today.exercises.length > 5 ? <Text variant="meta" color="tertiary">+{today.exercises.length - 5} more exercises</Text> : null}
+                </View>
+                <View style={{ flexDirection: "row", gap: 10, marginTop: 18 }}>
+                  <View style={{ flex: 1 }}><Button label={active.data ? "Resume workout" : "Start workout"} loading={busy === `start:${today.id}`} onPress={() => (active.data ? openActive() : startRow(workoutToRow(today)))} /></View>
+                  <Button label="Quick start" variant="secondary" loading={busy === "quick"} onPress={quick} style={{ paddingHorizontal: 18 }} />
+                </View>
               </>
             ) : (
               <>
                 <Label>TODAY</Label>
-                <Text variant="heading">No workout scheduled</Text>
-                <Text color="secondary">Generate one tuned to your goal, pick a template, or start empty.</Text>
-                <Button label="Generate a workout" variant="accent" loading={busy === "gen"} onPress={generate} />
+                <Text variant="heading" style={{ marginTop: 6 }}>No workout scheduled</Text>
+                <Text color="secondary" style={{ marginTop: 2 }}>Generate one tuned to your goal, start empty, or pick a template.</Text>
+                <View style={{ flexDirection: "row", gap: 10, marginTop: 18 }}>
+                  <View style={{ flex: 1 }}><Button label="Generate a workout" loading={busy === "gen"} onPress={generate} /></View>
+                  <Button label="Quick start" variant="secondary" loading={busy === "quick"} onPress={quick} style={{ paddingHorizontal: 18 }} />
+                </View>
+                <Button label="Browse templates" variant="text" onPress={() => setTab("templates")} style={{ marginTop: 4 }} />
               </>
             )}
-          </RaisedSurface>
+          </Card>
 
-          <View style={{ flexDirection: "row", gap: 10 }}>
-            {[
-              { icon: "flash-outline" as const, label: "Quick start", hint: "Add as you go", onPress: quick, key: "quick" },
-              { icon: "add-circle-outline" as const, label: "Create", hint: "Build a template", onPress: () => router.push("/workout/builder"), key: "create" },
-              { icon: "albums-outline" as const, label: "Templates", hint: `${WORKOUT_TEMPLATES.length} prebuilt + yours`, onPress: () => setTab("templates"), key: "tpl" },
-            ].map((h) => (
-              <Pressable key={h.key} onPress={h.onPress} disabled={busy === h.key} accessibilityRole="button" style={({ pressed }) => ({ flex: 1, padding: 12, borderRadius: radius.medium, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.lineSoft, gap: 6, opacity: pressed || busy === h.key ? 0.7 : 1 })}>
-                <Ionicons name={h.icon} size={20} color={colors.pinkSoft} />
-                <Text style={{ fontFamily: fonts.semibold, fontSize: 14 }}>{h.label}</Text>
-                <Text variant="meta" color="tertiary" numberOfLines={2} style={{ fontSize: 11 }}>{h.hint}</Text>
-              </Pressable>
-            ))}
+          <View>
+            <SectionHeading title="Recommended" action="All templates" onAction={() => setTab("templates")} />
+            <View style={{ gap: 12 }}>
+              {recommended.map((r) => <WorkoutCard key={r.id} row={r} busy={busy === `start:${r.id}`} onPress={() => setPreview(r)} onStart={() => startRow(r)} />)}
+            </View>
           </View>
 
-          <SectionHeading title="For you" action="All templates" onAction={() => setTab("templates")} />
-          <Text variant="meta" color="tertiary" style={{ marginTop: -6 }}>Based on your goal and experience.</Text>
-          {recommended.map((r) => <TemplateCard key={r.id} row={r} onPress={() => setPreview(r)} onMore={() => openMenu(r)} />)}
-
-          <SectionHeading title="Recent workouts" action="Full history" onAction={() => setTab("history")} />
-          {history.initialLoading ? <Skel h={64} r={24} /> : sessions.length === 0 ? <Text color="tertiary">No finished sessions yet.</Text> : (
-            sessions.slice(0, 4).map((s) => (
-              <Card key={s.id} style={{ marginBottom: 0, padding: 14 }}>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                  <Pressable onPress={() => setDetail(s)} style={{ flex: 1 }}>
-                    <Text numberOfLines={1}>{s.name}</Text>
-                    <Text variant="meta" color="tertiary">{fmtDate(s.startedAt)} · {fmtDuration(s.durationSeconds)} · {Math.round(fromKg(s.totalVolumeKg, units)).toLocaleString()} {u}</Text>
-                  </Pressable>
-                  <Chip label={busy === `repeat:${s.id}` ? "…" : "Repeat"} onPress={() => repeat(s)} />
+          <View>
+            <SectionHeading title="Recent workouts" action="History" onAction={() => setTab("history")} />
+            {history.initialLoading ? <Skel h={64} r={24} /> : sessions.length === 0 ? <EmptyState title="No finished sessions yet" body="Completed workouts show up here." /> : (
+              <Card variant="compact" style={{ marginBottom: 0 }}>
+                <View style={{ gap: 4 }}>
+                  {sessions.slice(0, 4).map((s) => <SessionRow key={s.id} s={s} units={units} onPress={() => setDetail(s)} trailing={<Button label={busy === `repeat:${s.id}` ? "…" : "Repeat"} variant="text" onPress={() => repeat(s)} />} />)}
                 </View>
               </Card>
-            ))
-          )}
+            )}
+          </View>
         </View>
       )}
 
       {tab === "history" && (
-        <View style={{ marginTop: 16, gap: 12 }}>
+        <View style={{ marginTop: 20, gap: 20 }}>
           <Card style={{ marginBottom: 0 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-              <Pressable onPress={() => { setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1)); setDay(null); }} hitSlop={12} accessibilityLabel="Previous month"><Ionicons name="chevron-back" size={20} color={colors.textSecondary} /></Pressable>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+              <PressScale onPress={() => { setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1)); setDay(null); }} hitSlop={6} accessibilityLabel="Previous month" style={{ width: HIT, height: HIT, alignItems: "center", justifyContent: "center" }}><Ionicons name="chevron-back" size={iconSize.md} color={colors.textSecondary} /></PressScale>
               <View style={{ alignItems: "center" }}>
-                <Text style={{ fontFamily: fonts.semibold }}>{month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</Text>
+                <Text variant="cardTitle">{month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</Text>
                 <Text variant="meta" color="tertiary">{cal.count} session{cal.count === 1 ? "" : "s"}</Text>
               </View>
-              <Pressable onPress={() => { setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1)); setDay(null); }} disabled={month >= new Date(new Date().getFullYear(), new Date().getMonth() + 2, 1)} hitSlop={12} accessibilityLabel="Next month"><Ionicons name="chevron-forward" size={20} color={colors.textSecondary} /></Pressable>
+              <PressScale onPress={() => { setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1)); setDay(null); }} disabled={month >= new Date(new Date().getFullYear(), new Date().getMonth() + 2, 1)} hitSlop={6} accessibilityLabel="Next month" style={{ width: HIT, height: HIT, alignItems: "center", justifyContent: "center" }}><Ionicons name="chevron-forward" size={iconSize.md} color={colors.textSecondary} /></PressScale>
             </View>
-            <View style={{ flexDirection: "row", marginBottom: 6 }}>
+            <View style={{ flexDirection: "row", marginBottom: 8 }}>
               {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => <Text key={i} variant="meta" color="tertiary" style={{ flex: 1, textAlign: "center" }}>{d}</Text>)}
             </View>
             <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
               {cal.cells.map((c, i) => (
-                <View key={i} style={{ width: `${100 / 7}%`, aspectRatio: 1, padding: 2 }}>
+                <View key={i} style={{ width: `${100 / 7}%`, height: 46, alignItems: "center", justifyContent: "center" }}>
                   {c.inMonth ? (
-                    <Pressable onPress={() => setDay(day === c.day ? null : c.day)} accessibilityLabel={`${c.day}${c.status === "done" ? ", trained" : c.status === "planned" ? ", planned" : ""}`} style={{ flex: 1, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: c.status === "done" ? colors.pink : day === c.day ? colors.surfaceFloat : "transparent", borderWidth: c.status === "planned" || c.isToday ? 1 : 0, borderColor: c.isToday ? colors.btnWhite : colors.lineHighlight }}>
-                      <Text variant="meta" style={{ color: c.status === "done" ? colors.onColor : colors.textSecondary }}>{c.day}</Text>
-                    </Pressable>
+                    <PressScale onPress={() => setDay(day === c.day ? null : c.day)} to={0.9} haptic="select" accessibilityLabel={`${month.toLocaleDateString(undefined, { month: "long" })} ${c.day}${c.status === "done" ? ", trained" : c.status === "planned" ? ", planned" : ""}${c.isToday ? ", today" : ""}`} accessibilityState={{ selected: day === c.day }} hitSlop={3} style={{ width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", overflow: "hidden", borderWidth: day === c.day ? 1.5 : c.status === "planned" ? 1 : 0, borderStyle: c.status === "planned" && day !== c.day ? "dashed" : "solid", borderColor: day === c.day ? colors.textPrimary : colors.lineHighlight }}>
+                      {c.status === "done" ? <Fill angle={135} stops={[colors.pink, colors.coral]} /> : null}
+                      <Text variant="meta" style={{ color: c.status === "done" ? colors.onAccent : c.isToday ? colors.textPrimary : colors.textSecondary, fontFamily: c.isToday ? fonts.bold : fonts.semibold }}>{c.day}</Text>
+                      {c.isToday && c.status !== "done" ? <View style={{ position: "absolute", bottom: 5, width: 4, height: 4, borderRadius: 2, backgroundColor: colors.pink }} /> : null}
+                    </PressScale>
                   ) : null}
                 </View>
               ))}
             </View>
-            <View style={{ flexDirection: "row", gap: 16, marginTop: 10 }}>
+            <View style={{ flexDirection: "row", gap: 18, marginTop: 14 }}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}><View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: colors.pink }} /><Text variant="meta" color="tertiary">Trained</Text></View>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}><View style={{ width: 10, height: 10, borderRadius: 5, borderWidth: 1, borderColor: colors.lineHighlight }} /><Text variant="meta" color="tertiary">Planned</Text></View>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}><View style={{ width: 10, height: 10, borderRadius: 5, borderWidth: 1, borderStyle: "dashed", borderColor: colors.textTertiary }} /><Text variant="meta" color="tertiary">Planned</Text></View>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}><View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: colors.pink }} /><Text variant="meta" color="tertiary">Today</Text></View>
             </View>
           </Card>
+
           {day != null ? (
-            (cal.byDay.get(day) ?? []).length ? (
-              cal.byDay.get(day)!.map((s) => <SessionRow key={s.id} s={s} units={units} onPress={() => setDetail(s)} />)
+            <View>
+              <SectionHeading title={new Date(month.getFullYear(), month.getMonth(), day).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })} />
+              {(cal.byDay.get(day) ?? []).length ? (
+                <Card variant="compact" style={{ marginBottom: 0 }}><View style={{ gap: 4 }}>{cal.byDay.get(day)!.map((s) => <SessionRow key={s.id} s={s} units={units} onPress={() => setDetail(s)} />)}</View></Card>
+              ) : (
+                <EmptyState title="No session this day" body="Tap another date to see what you trained." />
+              )}
+            </View>
+          ) : null}
+
+          <View>
+            <SectionHeading title="All sessions" />
+            {history.initialLoading ? <View style={{ gap: 10 }}>{[0, 1, 2].map((i) => <Skel key={i} h={64} r={24} />)}</View> : history.error && !history.data ? <ErrorState message="Couldn't load history." onRetry={history.refetch} /> : sessions.length === 0 ? (
+              <EmptyState title="No sessions yet" body="Your finished workouts land here — volume, duration and any PRs." action="Start today's workout" onAction={() => setTab("today")} />
             ) : (
-              <Text color="tertiary" style={{ textAlign: "center" }}>No session on {new Date(month.getFullYear(), month.getMonth(), day).toLocaleDateString(undefined, { month: "short", day: "numeric" })}.</Text>
-            )
-          ) : <Text variant="meta" color="tertiary" style={{ textAlign: "center" }}>Tap a day to see what you trained.</Text>}
-          <SectionHeading title="All sessions" />
-          <View style={{ gap: 10 }}>
-          {history.initialLoading ? [0, 1, 2].map((i) => <Skel key={i} h={72} r={24} />) : history.error && !history.data ? <ErrorState message="Couldn't load history." onRetry={history.refetch} /> : sessions.length === 0 ? (
-            <EmptyState title="No sessions yet" body="Your finished workouts land here — volume, duration and any PRs." action="Start today's workout" onAction={() => setTab("today")} />
-          ) : sessions.map((s) => <SessionRow key={s.id} s={s} units={units} onPress={() => setDetail(s)} />)}
+              <Card variant="compact" style={{ marginBottom: 0 }}><View style={{ gap: 4 }}>{sessions.map((s) => <SessionRow key={s.id} s={s} units={units} onPress={() => setDetail(s)} />)}</View></Card>
+            )}
           </View>
         </View>
       )}
 
       {tab === "templates" && (
-        <View style={{ marginTop: 16, gap: 10 }}>
-          <SectionHeading title="My templates" action="+ Create" onAction={() => router.push("/workout/builder")} />
-          {templates.initialLoading ? <Skel h={80} r={24} /> : rows.length === 0 ? <EmptyState title="No templates yet" body="Build one from scratch or save a copy of a prebuilt workout below." action="Create workout" onAction={() => router.push("/workout/builder")} /> : rows.map((r) => <TemplateCard key={r.id} row={r} onPress={() => setPreview(r)} onMore={() => openMenu(r)} />)}
-          <SectionHeading title="Prebuilt workouts" />
-          <PillTabs value={category} onChange={setCategory} options={[{ value: "all", label: "All" }, ...(Object.keys(CATEGORY_LABEL) as TemplateCategory[]).map((c) => ({ value: c, label: CATEGORY_LABEL[c] }))]} />
-          <PillTabs value={diff} onChange={setDiff} options={DIFFS.map((d) => ({ value: d, label: d === "all" ? "Any level" : d[0].toUpperCase() + d.slice(1) }))} />
-          {filteredPresets.length === 0 ? <Text color="tertiary" style={{ textAlign: "center", paddingVertical: 12 }}>No prebuilt workouts match those filters.</Text> : null}
-          {filteredPresets.map((t) => <TemplateCard key={t.id} row={presetToRow(t)} difficulty={t.difficulty} onPress={() => setPreview(presetToRow(t))} onMore={() => openMenu(presetToRow(t))} />)}
-          <Text variant="meta" color="tertiary" style={{ textAlign: "center", marginTop: 6 }}>Prebuilt workouts are starting points — save a copy to make one your own.</Text>
+        <View style={{ marginTop: 20, gap: 28 }}>
+          <View>
+            <SectionHeading title={`My templates${rows.length ? ` · ${rows.length}` : ""}`} action={rows.length ? "+ Create" : undefined} onAction={() => router.push("/workout/builder")} />
+            {templates.initialLoading ? <Skel h={110} r={24} /> : rows.length === 0 ? (
+              <EmptyState title="No templates of your own yet" body="Build one from scratch, or save a copy of a prebuilt workout below." action="Create workout" onAction={() => router.push("/workout/builder")} />
+            ) : (
+              <View style={{ gap: 12 }}>{rows.map((r) => <WorkoutCard key={r.id} row={r} busy={busy === `start:${r.id}`} onPress={() => setPreview(r)} onStart={() => startRow(r)} onMore={() => openMenu(r)} />)}</View>
+            )}
+          </View>
+
+          <View>
+            <SectionHeading title="Prebuilt workouts" />
+            <View style={{ gap: 10, marginBottom: 14 }}>
+              <PillTabs bleed value={category} onChange={setCategory} options={[{ value: "all", label: "All" }, ...(Object.keys(CATEGORY_LABEL) as TemplateCategory[]).map((c) => ({ value: c, label: CATEGORY_LABEL[c] }))]} />
+              <PillTabs bleed value={diff} onChange={setDiff} options={DIFFS.map((d) => ({ value: d, label: d === "all" ? "Any level" : d[0].toUpperCase() + d.slice(1) }))} />
+            </View>
+            {filteredPresets.length === 0 ? (
+              <EmptyState title="Nothing matches those filters" body="Loosen a filter to see more prebuilt workouts." action="Clear filters" onAction={() => { setCategory("all"); setDiff("all"); }} />
+            ) : (
+              <View style={{ gap: 12 }}>{filteredPresets.map((t) => <WorkoutCard key={t.id} row={presetToRow(t)} difficulty={t.difficulty} busy={busy === `start:${t.id}`} onPress={() => setPreview(presetToRow(t))} onStart={() => startRow(presetToRow(t))} onMore={() => openMenu(presetToRow(t))} />)}</View>
+            )}
+            <Text variant="meta" color="tertiary" style={{ textAlign: "center", marginTop: 16 }}>Prebuilt workouts are starting points — save a copy to make one your own.</Text>
+          </View>
         </View>
       )}
 
@@ -435,42 +458,58 @@ export default function Workouts() {
   );
 }
 
-function TemplateCard({ row, onPress, onMore, difficulty }: { row: TemplateRow; onPress: () => void; onMore: () => void; difficulty?: Difficulty }) {
+const cap = (t: string) => (t ? t[0].toUpperCase() + t.slice(1) : t);
+
+/**
+ * WorkoutCard — one size for every recommended / personal / prebuilt workout:
+ * name (+ level), a one-line description, primary muscle groups, then duration,
+ * exercise count and a single Start action. Tap opens the full detail; long-press
+ * (when `onMore` is given) opens the template actions.
+ */
+function WorkoutCard({ row, onPress, onStart, onMore, difficulty, busy }: { row: TemplateRow; onPress: () => void; onStart: () => void; onMore?: () => void; difficulty?: Difficulty; busy?: boolean }) {
+  const muscles = row.targetMuscles.slice(0, 3).map(cap).join(" · ");
   return (
-    <Pressable onPress={onPress} onLongPress={onMore} delayLongPress={300} accessibilityHint="Long-press for more actions">
-      <Card style={{ marginBottom: 0, padding: 16 }}>
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <View style={{ flex: 1, gap: 4 }}>
-            <Text variant="heading" style={{ fontSize: 17 }} numberOfLines={1}>{row.name}</Text>
-            {row.description ? <Text color="secondary" numberOfLines={2}>{row.description}</Text> : null}
-            <Text variant="meta" color="tertiary">{row.exerciseCount} exercises · ~{row.durationMin} min{difficulty ? ` · ${difficulty}` : ""}{row.targetMuscles.length ? ` · ${row.targetMuscles.slice(0, 3).join(", ")}` : ""}</Text>
+    <PressScale onPress={onPress} onLongPress={onMore} delayLongPress={300} to={0.985} accessibilityRole="none" accessibilityLabel={`${row.name}, ${row.durationMin} minutes, ${row.exerciseCount} exercises`} accessibilityHint={onMore ? "Long-press for more actions" : undefined}>
+      <Card variant="compact" style={{ marginBottom: 0, minHeight: 148 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <Text variant="cardTitle" numberOfLines={1} style={{ flex: 1 }}>{row.name}</Text>
+          {difficulty ? <Label>{difficulty.toUpperCase()}</Label> : null}
+        </View>
+        <Text color="secondary" numberOfLines={1} style={{ marginTop: 3 }}>{row.description || muscles || " "}</Text>
+        {row.description && muscles ? <Text variant="meta" color="tertiary" numberOfLines={1} style={{ marginTop: 6 }}>{muscles}</Text> : <View style={{ height: 17 + 6 }} />}
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}><Ionicons name="time-outline" size={iconSize.sm} color={colors.textTertiary} /><Text variant="meta" color="secondary">{row.durationMin} min</Text></View>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}><Ionicons name="barbell-outline" size={iconSize.sm} color={colors.textTertiary} /><Text variant="meta" color="secondary">{row.exerciseCount} exercises</Text></View>
           </View>
-          <Pressable onPress={onMore} hitSlop={12} accessibilityLabel={`More actions for ${row.name}`} style={{ paddingTop: 2 }}>
-            <Ionicons name="ellipsis-horizontal" size={20} color={colors.textTertiary} />
-          </Pressable>
+          <Button label="Start" size="sm" variant="secondary" loading={busy} onPress={onStart} style={{ paddingHorizontal: 22 }} />
         </View>
       </Card>
-    </Pressable>
+    </PressScale>
   );
 }
 
-function SessionRow({ s, units, onPress }: { s: WorkoutSession; units: Units; onPress: () => void }) {
+/** One finished session as a flat row (date block, name + facts, volume + PRs) — rows live inside a single card. */
+function SessionRow({ s, units, onPress, trailing }: { s: WorkoutSession; units: Units; onPress: () => void; trailing?: React.ReactNode }) {
   const prs = prCount(s);
+  const d = new Date(s.startedAt);
   return (
-    <Pressable onPress={onPress}>
-      <Card style={{ marginBottom: 0, padding: 16 }}>
-        <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 10 }}>
-          <View style={{ flex: 1 }}>
-            <Text numberOfLines={1} style={{ fontSize: 16 }}>{s.name}</Text>
-            <Text variant="meta" color="tertiary">{fmtDate(s.startedAt)} · {fmtDuration(s.durationSeconds)} · {s.performances.length} exercises</Text>
-          </View>
-          <View style={{ alignItems: "flex-end" }}>
-            <Num size={15}>{Math.round(fromKg(s.totalVolumeKg, units)).toLocaleString()} {unitLabel(units)}</Num>
-            {prs ? <Text variant="meta" style={{ color: colors.lime }}>{prs} PR{prs > 1 ? "s" : ""}</Text> : null}
-          </View>
+    <PressScale onPress={onPress} to={0.985} accessibilityRole={trailing ? "none" : "button"} accessibilityLabel={`${s.name}, ${fmtDate(s.startedAt)}`} style={{ flexDirection: "row", alignItems: "center", gap: 14, minHeight: 56, paddingVertical: 4 }}>
+      <View style={{ width: 40, alignItems: "center" }}>
+        <Num size={20}>{d.getDate()}</Num>
+        <Text variant="meta" color="tertiary">{d.toLocaleDateString(undefined, { month: "short" })}</Text>
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text numberOfLines={1}>{s.name}</Text>
+        <Text variant="meta" color="tertiary" numberOfLines={1}>{fmtDuration(s.durationSeconds)} · {s.performances.length} exercises{prs ? ` · ${prs} PR${prs > 1 ? "s" : ""}` : ""}</Text>
+      </View>
+      {trailing ?? (
+        <View style={{ alignItems: "flex-end" }}>
+          <Num size={15}>{Math.round(fromKg(s.totalVolumeKg, units)).toLocaleString()}</Num>
+          <Text variant="meta" color="tertiary">{unitLabel(units)}</Text>
         </View>
-      </Card>
-    </Pressable>
+      )}
+    </PressScale>
   );
 }
 
