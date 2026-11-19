@@ -6,10 +6,11 @@ import { ProfileMenu } from "@/components/profile-menu";
  * Trends: last 14 logged days.
  */
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Linking, Pressable, TextInput, View } from "react-native";
+import { Alert, Linking, Pressable, ScrollView, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import Animated, { useAnimatedStyle, type SharedValue } from "react-native-reanimated";
 import ReanimatedSwipeable from "react-native-gesture-handler/ReanimatedSwipeable";
 import { api } from "@/api/client";
 import { errorMessage, invalidateResource, useResource } from "@/api/hooks";
@@ -20,7 +21,7 @@ import { colors, fonts, radius } from "@/theme/tokens";
 import { AddFoodSheet } from "@/components/nutrition/add-food";
 import { Screen } from "@/components/ui/screen";
 import { Button, Chip, ProgressBar } from "@/components/ui/controls";
-import { Dial, EmptyState, ErrorState, PillTabs, Segmented, Sheet, Skel } from "@/components/ui/extra";
+import { Card, Dial, EmptyState, ErrorState, PillTabs, Segmented, Sheet, Skel } from "@/components/ui/extra";
 import { SoftSurface } from "@/components/ui/surface";
 import { toast } from "@/components/ui/toast";
 import { Label, Num, Text } from "@/components/ui/text";
@@ -136,45 +137,36 @@ export default function Nutrition() {
             <>
               <DaySummary day={d} onAdjust={() => setGoalOpen(true)} />
 
-              <SoftSurface style={{ padding: 16, gap: 12 }}>
+              <View style={{ gap: 4 }}>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                  <Text variant="heading" style={{ fontSize: 18 }}>Food log</Text>
+                  <Text variant="section">Food log</Text>
                   {total ? <Text variant="meta" color="tertiary">Swipe left to delete</Text> : null}
                 </View>
-                {total === 0 ? <Text color="secondary">Nothing logged for {fmtDay(date)} yet. Search a food, scan a barcode, or add it manually.</Text> : null}
-                {MEALS.map((meal) => {
-                  const entries = d.meals[meal] ?? [];
-                  const kcal = Math.round(d.mealTotals[meal]?.calories ?? 0);
-                  return (
-                    <View key={meal} style={{ gap: 6 }}>
-                      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                        <Label>{MEAL_LABEL[meal].toUpperCase()}</Label>
-                        {entries.length ? <Num size={12} color="tertiary">{kcal} kcal</Num> : null}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -20 }} contentContainerStyle={{ gap: 8, paddingHorizontal: 20, paddingVertical: 4 }}>
+                  <Chip label="Quick add" onPress={() => setAdd({ open: true, meal: mealForNow(), tab: "manual" })} />
+                  <Chip label="Scan barcode" onPress={() => setAdd({ open: true, meal: mealForNow(), tab: "scan" })} />
+                  <Chip label={copying ? "Copying…" : `Copy ${isToday ? "yesterday" : "day before"}`} onPress={copyPrev} />
+                </ScrollView>
+              </View>
+              {total === 0 ? <EmptyState title="Nothing logged yet" body={`Search a food, scan a barcode or add it manually for ${fmtDay(date)}.`} action="Add food" onAction={() => setAdd({ open: true, meal: mealForNow() })} /> : null}
+              {MEALS.map((meal) => {
+                const entries = d.meals[meal] ?? [];
+                const kcal = Math.round(d.mealTotals[meal]?.calories ?? 0);
+                return (
+                  <View key={meal} style={{ gap: 2 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 44 }}>
+                      <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
+                        <Text variant="cardTitle">{cap(MEAL_LABEL[meal])}</Text>
+                        {entries.length ? <Num size={13} color="tertiary">{kcal} kcal</Num> : null}
                       </View>
-                      {entries.map((e) => <EntryRow key={e.id} e={e} onEdit={() => setEdit(e)} onDelete={() => remove(e)} />)}
-                      <Pressable onPress={() => setAdd({ open: true, meal })} accessibilityRole="button" style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 6 }}>
-                        <Ionicons name="add" size={15} color={colors.pinkSoft} />
-                        <Text variant="meta" color="pink">Add to {MEAL_LABEL[meal]}</Text>
+                      <Pressable onPress={() => setAdd({ open: true, meal })} accessibilityRole="button" accessibilityLabel={`Add to ${MEAL_LABEL[meal]}`} hitSlop={4} style={{ width: 44, height: 44, alignItems: "center", justifyContent: "center", marginRight: -10 }}>
+                        <Ionicons name="add-circle-outline" size={24} color={colors.pinkSoft} />
                       </Pressable>
                     </View>
-                  );
-                })}
-              </SoftSurface>
-
-              <View style={{ flexDirection: "row", gap: 10 }}>
-                <Pressable onPress={() => setAdd({ open: true, meal: mealForNow(), tab: "manual" })} style={{ flex: 1, padding: 14, borderRadius: radius.medium, backgroundColor: colors.surface, gap: 6 }} accessibilityRole="button">
-                  <Ionicons name="sparkles-outline" size={18} color={colors.pinkSoft} />
-                  <Text style={{ fontFamily: fonts.semibold, fontSize: 14 }}>Quick add calories</Text>
-                </Pressable>
-                <Pressable onPress={copyPrev} disabled={copying} style={{ flex: 1, padding: 14, borderRadius: radius.medium, backgroundColor: colors.surface, gap: 6, opacity: copying ? 0.6 : 1 }} accessibilityRole="button">
-                  <Ionicons name="copy-outline" size={18} color={colors.pinkSoft} />
-                  <Text style={{ fontFamily: fonts.semibold, fontSize: 14 }}>{copying ? "Copying…" : `Copy ${isToday ? "yesterday" : "day before"}`}</Text>
-                </Pressable>
-                <Pressable onPress={() => setAdd({ open: true, meal: mealForNow(), tab: "scan" })} style={{ flex: 1, padding: 14, borderRadius: radius.medium, backgroundColor: colors.surface, gap: 6 }} accessibilityRole="button">
-                  <Ionicons name="barcode-outline" size={18} color={colors.pinkSoft} />
-                  <Text style={{ fontFamily: fonts.semibold, fontSize: 14 }}>Scan barcode</Text>
-                </Pressable>
-              </View>
+                    {entries.map((e) => <EntryRow key={e.id} e={e} onEdit={() => setEdit(e)} onDelete={() => remove(e)} />)}
+                  </View>
+                );
+              })}
 
               <Text variant="meta" color="tertiary" style={{ textAlign: "center" }}>
                 Food data from <Text variant="meta" color="secondary" onPress={() => Linking.openURL("https://world.openfoodfacts.org")}>Open Food Facts</Text> (ODbL) and <Text variant="meta" color="secondary" onPress={() => Linking.openURL("https://fdc.nal.usda.gov")}>USDA FoodData Central</Text>, with Nutritionix and Edamam as fallbacks.
@@ -183,7 +175,7 @@ export default function Nutrition() {
           ) : null}
         </View>
       ) : (
-        <Trends />
+        <Trends onLog={() => setTab("today")} />
       )}
 
       <AddFoodSheet open={add.open} meal={add.meal} date={date} initialTab={add.tab ?? "search"} onClose={() => setAdd((s) => ({ ...s, open: false, tab: undefined }))} onLogged={(nd) => { setDay(nd); setAdd((s) => ({ ...s, open: false, tab: undefined })); }} />
@@ -198,42 +190,53 @@ function DaySummary({ day, onAdjust }: { day: FoodDay; onAdjust: () => void }) {
   const { totals, goal, remaining } = day;
   const kcalGoal = goal?.dailyCalories ?? 0;
   const left = remaining?.calories ?? null;
-  const macros: [string, number, number | null, number | null, "lime" | "cyan" | "amber"][] = [
-    ["Protein", totals.protein, goal?.proteinGrams ?? null, remaining?.protein ?? null, "lime"],
-    ["Carbs", totals.carbs, goal?.carbGrams ?? null, remaining?.carbs ?? null, "cyan"],
-    ["Fat", totals.fat, goal?.fatGrams ?? null, remaining?.fat ?? null, "amber"],
+  const over = left != null && left < 0;
+  const macros: [string, number, number | null, "lime" | "cyan" | "amber"][] = [
+    ["Protein", totals.protein, goal?.proteinGrams ?? null, "lime"],
+    ["Carbs", totals.carbs, goal?.carbGrams ?? null, "cyan"],
+    ["Fat", totals.fat, goal?.fatGrams ?? null, "amber"],
   ];
   return (
-    <SoftSurface style={{ padding: 18, gap: 14 }}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 18 }}>
-        <Dial pct={kcalGoal ? (totals.calories / kcalGoal) * 100 : 0} size={124} tone="pink">
-          <Num size={26}>{Math.round(totals.calories)}</Num>
-          <Text variant="meta" color="tertiary">/ {kcalGoal || "—"} kcal</Text>
+    <Card variant="hero" style={{ gap: 18, marginBottom: 0 }}>
+      <View style={{ alignItems: "center", gap: 14 }}>
+        <Dial pct={kcalGoal ? (totals.calories / kcalGoal) * 100 : 0} size={176} tone={over ? "amber" : "pink"}>
+          <Num size={38}>{left == null ? Math.round(totals.calories) : Math.abs(left)}</Num>
+          <Text variant="meta" color="secondary">{left == null ? "kcal eaten" : over ? "kcal over" : "kcal remaining"}</Text>
         </Dial>
-        <View style={{ flex: 1, gap: 10 }}>
-          {macros.map(([l, have, want, rem, tone]) => (
-            <View key={l} style={{ gap: 4 }}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                <Text variant="meta" color="secondary">{l}</Text>
-                <Num size={12} color="secondary">{round(have)}{want ? ` / ${want}` : ""} g</Num>
-              </View>
-              <ProgressBar pct={want ? (have / want) * 100 : 0} tone={tone} height={6} />
-              {rem != null ? <Text variant="meta" color="tertiary" style={{ fontSize: 11 }}>{rem < 0 ? `${Math.abs(round(rem))} g over` : `${round(rem)} g left`}</Text> : null}
-            </View>
-          ))}
+        <View style={{ flexDirection: "row", gap: 28 }}>
+          <View style={{ alignItems: "center", gap: 2 }}><Num size={18}>{Math.round(totals.calories)}</Num><Text variant="meta" color="tertiary">Eaten</Text></View>
+          <View style={{ alignItems: "center", gap: 2 }}><Num size={18}>{kcalGoal || "—"}</Num><Text variant="meta" color="tertiary">Target</Text></View>
         </View>
       </View>
-      {goal?.fiberGrams ? (
-        <View style={{ gap: 4 }}>
-          <View style={{ flexDirection: "row", justifyContent: "space-between" }}><Text variant="meta" color="secondary">Fiber</Text><Num size={12} color="secondary">{round(totals.fiber ?? 0)} / {goal.fiberGrams} g</Num></View>
-          <ProgressBar pct={((totals.fiber ?? 0) / goal.fiberGrams) * 100} tone="mauve" height={5} />
-        </View>
-      ) : null}
+      <View style={{ flexDirection: "row", gap: 16 }}>
+        {macros.map(([l, have, want, tone]) => (
+          <View key={l} style={{ flex: 1, gap: 6 }}>
+            <Text variant="meta" color="secondary">{l}</Text>
+            <Num size={18}>{round(have)}<Text variant="meta" color="tertiary">{want ? ` / ${want} g` : " g"}</Text></Num>
+            <ProgressBar pct={want ? (have / want) * 100 : 0} tone={tone} height={6} />
+          </View>
+        ))}
+      </View>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-        <Text color={left != null && left < 0 ? "danger" : "secondary"} style={{ flex: 1 }}>{left == null ? "Set a calorie target to see what's remaining." : left < 0 ? `${Math.abs(left)} kcal over target` : `${left} kcal remaining`}</Text>
-        <Chip label={goal ? "Adjust targets" : "Set targets"} onPress={onAdjust} />
+        <Text variant="meta" color="tertiary" style={{ flex: 1 }}>
+          {goal?.fiberGrams ? `Fiber ${round(totals.fiber ?? 0)} / ${goal.fiberGrams} g` : left == null ? "Set a calorie target to see what's remaining." : " "}
+        </Text>
+        <Button label={goal ? "Adjust targets" : "Set targets"} variant="text" size="sm" onPress={onAdjust} />
       </View>
-    </SoftSurface>
+    </Card>
+  );
+}
+
+function DeleteAction({ prog, name, onDelete }: { prog: SharedValue<number>; name: string; onDelete: () => void }) {
+  // hidden until the row is actually dragged, since the row itself has no opaque background
+  const fade = useAnimatedStyle(() => ({ opacity: Math.min(1, prog.get() * 6) }));
+  return (
+    <Animated.View style={[{ width: 84, marginLeft: 8, marginVertical: 4 }, fade]}>
+      <Pressable onPress={onDelete} accessibilityLabel={`Delete ${name}`} style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.danger, borderRadius: radius.small }}>
+        <Ionicons name="trash-outline" size={18} color="#fff" />
+        <Text variant="meta" style={{ color: "#fff" }}>Delete</Text>
+      </Pressable>
+    </Animated.View>
   );
 }
 
@@ -244,15 +247,10 @@ function EntryRow({ e, onEdit, onDelete }: { e: FoodLogEntry; onEdit: () => void
       friction={2}
       rightThreshold={60}
       overshootRight={false}
-      renderRightActions={() => (
-        <Pressable onPress={onDelete} accessibilityLabel={`Delete ${e.foodName}`} style={{ width: 84, alignItems: "center", justifyContent: "center", backgroundColor: colors.danger, borderRadius: radius.small, marginLeft: 8 }}>
-          <Ionicons name="trash-outline" size={18} color="#fff" />
-          <Text variant="meta" style={{ color: "#fff" }}>Delete</Text>
-        </Pressable>
-      )}
+      renderRightActions={(prog) => <DeleteAction prog={prog} name={e.foodName} onDelete={onDelete} />}
       onSwipeableOpen={() => Haptics.selectionAsync().catch(() => {})}
     >
-      <Pressable onPress={onEdit} onLongPress={() => Alert.alert(e.foodName, undefined, [{ text: "Cancel", style: "cancel" }, { text: "Edit", onPress: onEdit }, { text: "Delete", style: "destructive", onPress: onDelete }])} accessibilityHint="Tap to edit, swipe left to delete" style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10, paddingHorizontal: 12, borderRadius: radius.small, backgroundColor: colors.surfaceOpaque, borderWidth: 1, borderColor: colors.lineSoft }}>
+      <Pressable onPress={onEdit} onLongPress={() => Alert.alert(e.foodName, undefined, [{ text: "Cancel", style: "cancel" }, { text: "Edit", onPress: onEdit }, { text: "Delete", style: "destructive", onPress: onDelete }])} accessibilityHint="Tap to edit, swipe left to delete" style={{ flexDirection: "row", alignItems: "center", gap: 10, minHeight: 52, paddingVertical: 8 }}>
         <View style={{ flex: 1 }}>
           <Text numberOfLines={1}>{e.foodName}{e.brand ? <Text color="tertiary"> · {e.brand}</Text> : null}</Text>
           <Text variant="meta" color="tertiary">{qty} · P {round(e.protein)} · C {round(e.carbs)} · F {round(e.fat)}</Text>
@@ -396,7 +394,7 @@ function CalendarSheet({ visible, value, max, onClose, onPick }: { visible: bool
   );
 }
 
-function Trends() {
+function Trends({ onLog }: { onLog: () => void }) {
   const res = useResource<{ date: string; calories: number; protein: number }[]>("food:summary:14", () => api.food.summary(14).then((r) => r.days));
   const data = res.data;
   const stats = useMemo(() => {
@@ -406,7 +404,7 @@ function Trends() {
   }, [data]);
   if (res.error && !data) return <View style={{ marginTop: 14 }}><ErrorState message={errorMessage(res.error)} onRetry={res.refetch} /></View>;
   if (!data) return <View style={{ marginTop: 14, gap: 12 }}><Skel h={80} r={24} /><Skel h={260} r={32} /></View>;
-  if (!data.length) return <View style={{ marginTop: 14 }}><EmptyState title="No history yet" body="Log food for a few days and your calorie and protein trend shows up here." /></View>;
+  if (data.length < 3) return <View style={{ marginTop: 14 }}><EmptyState title="Not enough history yet" body={`Trends appear after three logged days — you have ${data.length}.`} action="Log food" onAction={onLog} /></View>;
   return (
     <View style={{ marginTop: 14, gap: 14 }}>
       <View style={{ flexDirection: "row", gap: 10 }}>
