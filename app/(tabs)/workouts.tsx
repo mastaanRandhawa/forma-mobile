@@ -24,6 +24,7 @@ import { useDevicePrefs } from "@/lib/device-prefs";
 import { useActiveSession } from "@/components/workout-bar";
 import { Screen } from "@/components/ui/screen";
 import { Button, Chip, SectionHeading } from "@/components/ui/controls";
+import { TourTarget } from "@/components/tour/tour";
 import { ActionMenu, Card, EmptyState, ErrorState, PillTabs, Segmented, Sheet, Skel, type MenuAction } from "@/components/ui/extra";
 import { ExerciseThumb } from "@/components/exercise";
 import { PopoverMenu } from "@/components/ui/popover";
@@ -213,7 +214,7 @@ export default function Workouts() {
         </View>
       </View>
 
-      <Segmented value={tab} onChange={setTab} options={TABS.map((t) => ({ value: t.value, label: t.label }))} />
+      <TourTarget id="train-tabs"><Segmented value={tab} onChange={setTab} options={TABS.map((t) => ({ value: t.value, label: t.label }))} /></TourTarget>
 
       {tab === "today" && (
         <View style={{ marginTop: 20, gap: 20 }}>

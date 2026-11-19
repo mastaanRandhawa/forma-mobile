@@ -7,6 +7,7 @@ import { THEME_MAP } from "@/theme/themes";
 import { customizationItems } from "@/theme/catalog";
 import { GOAL_LABELS } from "@/lib/profile-options";
 import { Screen } from "@/components/ui/screen";
+import { useTour } from "@/components/tour/tour";
 import { Card, PageHeader, SettingRow } from "@/components/ui/extra";
 import { Button } from "@/components/ui/controls";
 import { Text } from "@/components/ui/text";
@@ -22,6 +23,7 @@ export default function SettingsOverview() {
 
   const summary = [user?.experienceLevel, user?.fitnessGoal ? GOAL_LABELS[user.fitnessGoal] : null, user?.trainingFrequencyTarget ? `${user.trainingFrequencyTarget} days/week` : null].filter(Boolean).join(" · ");
   const notifCount = Object.values(prefs.notifications).filter(Boolean).length;
+  const tour = useTour();
   const themeName = THEME_MAP[cz.equipped.theme]?.name ?? "default";
   const owned = customizationItems.filter((i) => cz.isOwned(i.id)).length;
 
@@ -50,8 +52,9 @@ export default function SettingsOverview() {
       </Card>
       <Card>
         {rows.map((r, i) => (
-          <SettingRow key={r.to} title={r.label} hint={r.value} icon={r.icon} onPress={() => router.push(r.to as never)} last={i === rows.length - 1} />
+          <SettingRow key={r.to} title={r.label} hint={r.value} icon={r.icon} onPress={() => router.push(r.to as never)} last={false} />
         ))}
+        <SettingRow title="Replay app tour" hint="A short walkthrough of the main features" icon="compass-outline" onPress={() => tour.start()} last />
       </Card>
     </Screen>
   );

@@ -9,6 +9,7 @@ import { useNotifications, useWallet } from "@/api/hooks";
 import { useProgression } from "@/api/settings";
 import { useAuth } from "@/auth/auth-provider";
 import { colors, fonts } from "@/theme/tokens";
+import { useTour } from "./tour/tour";
 import { PopoverMenu, type PopoverItem } from "./ui/popover";
 import { Text } from "./ui/text";
 
@@ -18,12 +19,14 @@ export function ProfileMenu() {
   const prog = useProgression();
   const notes = useNotifications();
   const wallet = useWallet();
+  const tour = useTour();
   const unread = notes.data?.unreadCount ?? 0;
 
   const items: PopoverItem[] = [
     { key: "notifications", label: "Notifications", icon: "notifications-outline", badge: unread ? (unread > 99 ? "99+" : unread) : undefined, onPress: () => router.push("/notifications") },
     ...(prog.has("store") ? [{ key: "store", label: "Store", icon: "bag-handle-outline" as const, hint: `${(wallet.data?.balance ?? 0).toLocaleString()} coins`, onPress: () => router.push("/store") }] : []),
     { key: "settings", label: "Settings", icon: "settings-outline", onPress: () => router.push("/settings") },
+    { key: "tour", label: "Replay app tour", icon: "compass-outline", onPress: () => tour.start() },
     { key: "setup", label: "Redo setup", icon: "refresh-outline", onPress: () => router.push("/onboarding") },
     {
       key: "signout",

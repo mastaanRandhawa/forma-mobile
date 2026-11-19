@@ -1,4 +1,5 @@
 import { ProfileMenu } from "@/components/profile-menu";
+import { TourTarget } from "@/components/tour/tour";
 /**
  * Nutrition (website: components/nutrition/FoodLog.tsx) — the food logger.
  * Today: date navigation + calendar, calorie ring and macros vs targets,
@@ -108,7 +109,7 @@ export default function Nutrition() {
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <Text variant="title">Nutrition</Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-          {tab === "today" ? <Chip label="+ Add food" active onPress={() => setAdd({ open: true, meal: mealForNow() })} /> : null}
+          {tab === "today" ? <TourTarget id="nutrition-add"><Chip label="+ Add food" active onPress={() => setAdd({ open: true, meal: mealForNow() })} /></TourTarget> : null}
           <ProfileMenu />
         </View>
       </View>
@@ -198,6 +199,7 @@ function DaySummary({ day, onAdjust }: { day: FoodDay; onAdjust: () => void }) {
   ];
   return (
     <Card variant="hero" style={{ gap: 18, marginBottom: 0 }}>
+      <TourTarget id="nutrition-summary">
       <View style={{ alignItems: "center", gap: 14 }}>
         <Dial pct={kcalGoal ? (totals.calories / kcalGoal) * 100 : 0} size={176} tone={over ? "amber" : "pink"}>
           <Num size={38}>{left == null ? Math.round(totals.calories) : Math.abs(left)}</Num>
@@ -208,6 +210,7 @@ function DaySummary({ day, onAdjust }: { day: FoodDay; onAdjust: () => void }) {
           <View style={{ alignItems: "center", gap: 2 }}><Num size={18}>{kcalGoal || "—"}</Num><Text variant="meta" color="tertiary">Target</Text></View>
         </View>
       </View>
+      </TourTarget>
       <View style={{ flexDirection: "row", gap: 16 }}>
         {macros.map(([l, have, want, tone]) => (
           <View key={l} style={{ flex: 1, gap: 6 }}>

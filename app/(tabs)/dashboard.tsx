@@ -31,6 +31,7 @@ import { PressScale } from "@/components/ui/pressable";
 import { CountUp } from "@/components/ui/count-up";
 import { toast } from "@/components/ui/toast";
 import { KaiOrb, coachMood } from "@/components/ui/kai-orb";
+import { TourTarget } from "@/components/tour/tour";
 import { QuickLogRow } from "@/components/quick-actions";
 import { ProfileMenu } from "@/components/profile-menu";
 import { RecessedSurface } from "@/components/ui/surface";
@@ -203,7 +204,7 @@ export default function Dashboard() {
             <Text variant="title" numberOfLines={1}>{d?.greeting ?? partOfDay()}{(d?.user?.name ?? user?.name) ? `, ${(d?.user?.name ?? user?.name ?? "").split(" ")[0]}` : ""}</Text>
             {dash.initialLoading ? <Skel h={14} w="60%" style={{ marginTop: 8 }} /> : <Text color="secondary" numberOfLines={1} style={{ marginTop: 4 }}>{subtitle}</Text>}
           </View>
-          <ProfileMenu />
+          <TourTarget id="home-profile"><ProfileMenu /></TourTarget>
         </View>
 
         {dash.error && !d ? <View style={{ marginBottom: 20 }}><ErrorState message={errorMessage(dash.error)} onRetry={dash.refetch} /></View> : null}
@@ -226,6 +227,7 @@ export default function Dashboard() {
         </View>
 
         <View style={{ marginBottom: 20 }}>
+          <TourTarget id="home-today">
           <TodayCard
             loading={dash.initialLoading}
             activeName={active.data?.name}
@@ -238,6 +240,7 @@ export default function Dashboard() {
             onGenerate={generate}
             onChoose={() => router.push("/workouts")}
           />
+          </TourTarget>
         </View>
 
         <View style={{ marginBottom: 20 }}>
@@ -247,7 +250,7 @@ export default function Dashboard() {
         </View>
 
         <View style={{ marginBottom: 20 }}>
-          <QuickLogRow />
+          <TourTarget id="home-quicklog"><QuickLogRow /></TourTarget>
         </View>
 
         <PressScale onPress={() => router.push("/trainer")} to={0.985} accessibilityLabel={`Open chat with ${d?.trainerName ?? "Kai"}`} style={{ marginBottom: 24 }}>

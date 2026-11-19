@@ -17,6 +17,7 @@ import { ActionMenu, Card, ErrorState, Sheet, Skel, SliderBar } from "@/componen
 import { toast } from "@/components/ui/toast";
 import { KaiOrb, coachMood } from "@/components/ui/kai-orb";
 import { Label, Text } from "@/components/ui/text";
+import { TourTarget } from "@/components/tour/tour";
 import { DOCK_FULL, dockBottom } from "@/components/dock-metrics";
 
 type Msg = { id: string; from: "trainer" | "user"; text: string; time: string; isProgram?: boolean };
@@ -217,7 +218,7 @@ export default function TrainerTab() {
         ) : null}
 
         <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 10, paddingHorizontal: 16, paddingTop: 8, paddingBottom: kb ? 10 : dockBottom(insets.bottom) + DOCK_FULL + 10 }}>
-          <TextInput value={draft} onChangeText={setDraft} placeholder={`Message ${name}`} placeholderTextColor={colors.textTertiary} multiline style={{ flex: 1, maxHeight: 120, minHeight: 46, borderRadius: radius.large, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, backgroundColor: colors.surfaceRecessed, color: colors.textPrimary, fontFamily: fonts.regular, fontSize: 16 }} />
+          <TourTarget id="coach-composer" style={{ flex: 1 }}><TextInput value={draft} onChangeText={setDraft} placeholder={`Message ${name}`} placeholderTextColor={colors.textTertiary} multiline style={{ flex: 1, maxHeight: 120, minHeight: 46, borderRadius: radius.large, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12, backgroundColor: colors.surfaceRecessed, color: colors.textPrimary, fontFamily: fonts.regular, fontSize: 16 }} /></TourTarget>
           <Pressable onPress={() => send(draft)} disabled={!draft.trim() || typing} accessibilityRole="button" accessibilityLabel="Send message" style={{ width: 46, height: 46, borderRadius: 23, backgroundColor: colors.btnWhite, alignItems: "center", justifyContent: "center", opacity: draft.trim() && !typing ? 1 : 0.5 }}>
             <Ionicons name="arrow-up" size={22} color={colors.btnWhiteInk} />
           </Pressable>

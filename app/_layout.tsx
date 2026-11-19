@@ -22,6 +22,7 @@ import { colors } from "@/theme/tokens";
 import { Atmosphere } from "@/components/ui/atmosphere";
 import { SettingsProvider, useAppearance, usePrefs } from "@/api/settings";
 import { ThemeProvider, useCustomization } from "@/theme/theme-provider";
+import { TourProvider } from "@/components/tour/tour";
 import { ToastHost } from "@/components/ui/toast";
 import { OfflineBanner } from "@/components/offline-banner";
 import { configureNotifications, onNotificationTap, syncWorkoutReminders } from "@/lib/reminders";
@@ -128,11 +129,13 @@ function ThemedShell({ authKey }: { authKey: string }) {
     <ThemeProvider authKey={authKey} reduceMotion={appearance.reduceMotion}>
       <Atmosphere />
       <ThemedStatusBar />
-      <NavThemeProvider value={NAV_THEME}>
-        <ThemeSwap>
-          <AuthGate />
-        </ThemeSwap>
-      </NavThemeProvider>
+      <TourProvider>
+        <NavThemeProvider value={NAV_THEME}>
+          <ThemeSwap>
+            <AuthGate />
+          </ThemeSwap>
+        </NavThemeProvider>
+      </TourProvider>
       <OfflineBanner />
       <ToastHost />
     </ThemeProvider>

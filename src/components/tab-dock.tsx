@@ -33,6 +33,7 @@ import { withAlpha } from "@/lib/color";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
 import { DOCK_FULL, DOCK_ITEM_FULL, DOCK_ITEM_MIN, DOCK_MIN, DOCK_PAD, dockBottom } from "./dock-metrics";
 import { useNavChrome } from "./nav-chrome";
+import { TourTarget } from "./tour/tour";
 
 export { DOCK_FULL, DOCK_MIN };
 
@@ -181,6 +182,7 @@ export function TabDock({ state, navigateToTab }: BottomTabBarProps) {
 
   return (
     <View style={{ position: "absolute", left: 16, right: 16, bottom: dockBottom(insets.bottom) }} pointerEvents="box-none" onLayout={(e) => cw.set(e.nativeEvent.layout.width)}>
+      <TourTarget id="dock" style={{ alignSelf: "flex-start" }}>
       <Animated.View style={[{ alignSelf: "flex-start", opacity: mounted ? 1 : 0 }, pillStyle, shadow.soft]}>
         <GlassSurface radiusSize="pill" style={{ flex: 1 }}>
           <GestureDetector gesture={pan}>
@@ -210,6 +212,7 @@ export function TabDock({ state, navigateToTab }: BottomTabBarProps) {
           </GestureDetector>
         </GlassSurface>
       </Animated.View>
+      </TourTarget>
     </View>
   );
 }
