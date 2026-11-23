@@ -21,7 +21,13 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "app.forma.mobile"
+      "package": "app.forma.mobile",
+      "permissions": [
+        "android.permission.CAMERA"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -41,7 +47,8 @@
         "expo-camera",
         {
           "cameraPermission": "Forma uses the camera to scan food barcodes and, if you turn it on, to check your exercise form.",
-          "microphonePermission": false
+          "microphonePermission": false,
+          "recordAudioAndroid": false
         }
       ],
       [
@@ -54,6 +61,17 @@
       "expo-notifications"
     ],
     "scheme": "forma",
-    "backgroundColor": "#170D17"
+    "backgroundColor": "#170D17",
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "ba533eb6-4ef1-45af-9e19-46e86542937c"
+      }
+    },
+    "owner": "msataanrandhawa"
   }
 }
