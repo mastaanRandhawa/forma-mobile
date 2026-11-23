@@ -10,13 +10,13 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://YOUR-API-HOST/api/v1"
+        "EXPO_PUBLIC_API_URL": "https://forma-backend-512u.onrender.com/api/v1"
       }
     },
     "production": {
       "autoIncrement": true,
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://YOUR-API-HOST/api/v1"
+        "EXPO_PUBLIC_API_URL": "https://forma-backend-512u.onrender.com/api/v1"
       }
     }
   },
