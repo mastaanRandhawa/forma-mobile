@@ -12,13 +12,12 @@ import { Animated, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { api } from "@/api/client";
-import { errorMessage, invalidateResource, useConsistency, useDashboard, useGoals, useMuscleMap, usePlannedWorkouts, useReadiness, useSessionHistory } from "@/api/hooks";
+import { errorMessage, invalidateResource, useConsistency, useDashboard, useGoals, usePlannedWorkouts, useReadiness, useSessionHistory } from "@/api/hooks";
 import { usePrefs, useProgression } from "@/api/settings";
-import type { GoalWithProgress } from "@/api/types";
+import type { GoalWithProgress, Quest, RewardsState } from "@/api/types";
 import { useAuth } from "@/auth/auth-provider";
 import { fromKg, unitLabel } from "@/lib/workouts";
-import { useTrainingProgress } from "@/lib/progression";
-import { claimQuest, computeQuests, subscribeRewards, type Quest } from "@/lib/rewards";
+import { useRewards } from "@/lib/progression";
 import { useEquippedItem, useTheme } from "@/theme/theme-provider";
 import { colors, radius, type Tone } from "@/theme/tokens";
 import { CheckinSheet, useCheckins, useTodayCheckin } from "@/components/checkin";
@@ -68,10 +67,10 @@ export default function Dashboard() {
   const checkins = useCheckins();
   const today = useTodayCheckin();
   const active = useActiveSession();
-  const muscles = useMuscleMap("week");
-  const training = useTrainingProgress();
-  const [quests, setQuests] = useState<Quest[] | null>(null);
-  const [questTick, setQuestTick] = useState(0);
+  const rewards = useRewards();
+  const rw = rewards.data;
+  const training = { streak: rw?.streak ?? { weeks: 0, target: 3, thisWeek: 0, passReady: true }, loading: rewards.initialLoading };
+  const [pledging, setPledging] = useState(false);
   const look = useEquippedItem("avatar")?.id;
   const d = dash.data;
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -82,7 +81,7 @@ export default function Dashboard() {
 
   const refresh = async () => {
     invalidateResource();
-    await Promise.all([dash, hist, goals, readiness, cons, planned, checkins, active, muscles, training].map((r) => r.reload()));
+    await Promise.all([dash, hist, goals, readiness, cons, planned, checkins, active, rewards].map((r) => r.reload()));
   };
 
   const sessions = useMemo(() => hist.data ?? [], [hist.data]);
@@ -96,24 +95,32 @@ export default function Dashboard() {
     return out as boolean[];
   }, [sessions]);
 
-  // weekly quests — recomputed when history changes or a reward is granted elsewhere
-  useEffect(() => subscribeRewards(() => setQuestTick((t) => t + 1)), []);
+  // a shield was spent on this read — say so once
+  const shieldUsed = rw?.streak.shieldUsedNow ?? false;
   useEffect(() => {
-    if (!hist.data) return;
-    const monday = weekStart(0).getTime();
-    const checkinDays = new Set((checkins.data ?? []).filter((c) => Date.parse(c.recordedAt) >= monday).map((c) => new Date(c.recordedAt).toDateString())).size;
-    let live = true;
-    void computeQuests({
-      sessions: hist.data,
-      musclesThisWeek: (muscles.data?.muscles ?? []).filter((m) => m.score > 0).length,
-      weeklyTarget: training.streak.target,
-      checkinDays,
-      checkinsEnabled: prefs.recovery.manualCheckins,
-    }).then((q) => live && setQuests(q));
-    return () => { live = false; };
-  }, [hist.data, muscles.data, checkins.data, training.streak.target, prefs.recovery.manualCheckins, questTick]);
+    if (shieldUsed) toast.success("A streak shield covered a missed week");
+  }, [shieldUsed]);
+
+  // quests, pledges: the server decides and pays; we show what it returns
   const claim = async (q: Quest) => {
-    if (!(await claimQuest(q))) toast.error("Couldn't claim — check your connection.");
+    try {
+      const res = await api.rewards.claimQuest(q.id, rewards.checkinsEnabled);
+      rewards.mutate(res.state);
+      invalidateResource("wallet");
+      toast.coins(res.coins, `Quest · ${q.title}`);
+    } catch (e) {
+      toast.error(errorMessage(e as Error));
+    }
+  };
+  const pledge = async (stake: number) => {
+    try {
+      rewards.mutate(await api.rewards.pledge(stake, rewards.checkinsEnabled));
+      invalidateResource("wallet");
+      setPledging(false);
+      toast.success(`Pledged ${stake} coins — hit your target to get ${stake + Math.round(stake * (rw?.pledgeOptions.bonusRate ?? 0.5))} back`);
+    } catch (e) {
+      toast.error(errorMessage(e as Error));
+    }
   };
 
   const ready = d ? d.readinessAvailable !== "unavailable" : false;
@@ -271,7 +278,7 @@ export default function Dashboard() {
 
         <View style={{ marginBottom: 20 }}>
           <Quiet widgetKey="workout-streak">
-            <WeekCard done={weekly.done} target={weekly.target} streak={training.streak.weeks} passReady={training.streak.passReady} trained={trained} quests={quests} onClaim={claim} onOpen={() => router.push(prog.has("progress_basic") ? "/progress" : "/workouts")} />
+            <WeekCard done={weekly.done} target={weekly.target} streak={training.streak.weeks} passReady={training.streak.passReady} trained={trained} rewards={rw} onClaim={claim} onPledge={() => setPledging(true)} onOpen={() => router.push(prog.has("progress_basic") ? "/progress" : "/workouts")} />
           </Quiet>
         </View>
 
@@ -360,6 +367,22 @@ export default function Dashboard() {
       </Sheet>
 
       <CheckinSheet visible={checkin} onClose={() => setCheckin(false)} seed={today.latest} onSaved={() => { today.refetch(); dash.refetch(); readiness.refetch(); }} />
+      <Sheet visible={pledging} onClose={() => setPledging(false)} eyebrow="this week" title="Pledge on your target">
+        <Text color="secondary">
+          Stake coins on finishing {training.streak.target} workout{training.streak.target > 1 ? "s" : ""} this week. Hit it and you get your stake back plus {Math.round((rw?.pledgeOptions.bonusRate ?? 0.5) * 100)}%. Miss it and the stake is gone.
+        </Text>
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          {(rw?.pledgeOptions.stakes ?? []).map((stake) => (
+            <PressScale key={stake} onPress={() => pledge(stake)} disabled={(rw?.balance ?? 0) < stake} accessibilityLabel={`Pledge ${stake} coins`} style={{ flex: 1, opacity: (rw?.balance ?? 0) < stake ? 0.4 : 1 }}>
+              <RecessedSurface radiusSize="medium" style={{ padding: 14, alignItems: "center", gap: 4 }}>
+                <Num size={22} style={{ color: colors.amber }}>{stake}</Num>
+                <Text variant="meta" color="tertiary">win {stake + Math.round(stake * (rw?.pledgeOptions.bonusRate ?? 0.5))}</Text>
+              </RecessedSurface>
+            </PressScale>
+          ))}
+        </View>
+        <Text variant="meta" color="tertiary">You have {(rw?.balance ?? 0).toLocaleString()} coins. One pledge a week, Monday to Wednesday.</Text>
+      </Sheet>
       <GoalLogSheet goal={logGoal} onClose={() => setLogGoal(null)} onLogged={() => goals.refetch()} />
     </View>
   );
@@ -434,7 +457,10 @@ function TodayCard({ loading, activeName, name, meta, muscles, upcoming, generat
   );
 }
 
-function WeekCard({ done, target, streak, passReady, trained, quests, onClaim, onOpen }: { done: number; target: number; streak: number; passReady: boolean; trained: boolean[]; quests: Quest[] | null; onClaim: (q: Quest) => void; onOpen: () => void }) {
+function WeekCard({ done, target, streak, passReady, trained, rewards, onClaim, onPledge, onOpen }: { done: number; target: number; streak: number; passReady: boolean; trained: boolean[]; rewards: RewardsState | null; onClaim: (q: Quest) => void; onPledge: () => void; onOpen: () => void }) {
+  const quests = rewards?.quests ?? null;
+  const shields = rewards?.shields.held ?? 0;
+  const p = rewards?.pledge;
   const left = target ? Math.max(0, target - done) : 0;
   return (
     <Card variant="compact" style={{ marginBottom: 0 }}>
@@ -451,7 +477,7 @@ function WeekCard({ done, target, streak, passReady, trained, quests, onClaim, o
           <Flame active={streak > 0} />
           <View>
             <Text variant="meta" color="secondary">{streak > 0 ? `${streak}-week streak` : "No streak yet"}</Text>
-            {streak > 0 ? <Text variant="meta" color="tertiary" style={{ fontSize: 11 }}>{passReady ? "Free pass ready" : "Free pass used"}</Text> : null}
+            {streak > 0 ? <Text variant="meta" color="tertiary" style={{ fontSize: 11 }}>{passReady ? "Free pass ready" : "Free pass used"}{shields ? ` · ${shields} shield${shields > 1 ? "s" : ""}` : ""}</Text> : null}
           </View>
         </View>
       </View>
@@ -473,6 +499,20 @@ function WeekCard({ done, target, streak, passReady, trained, quests, onClaim, o
         </View>
         {quests === null ? [0, 1, 2].map((i) => <Skel key={i} h={36} r={12} />) : quests.map((q) => <QuestRow key={q.id} q={q} onClaim={() => onClaim(q)} />)}
       </View>
+      {p ? (
+        <View style={{ marginTop: 14, flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Ionicons name={p.status === "won" ? "trophy" : "hand-left-outline"} size={15} color={p.status === "won" ? colors.lime : colors.amber} />
+          <Text variant="meta" color="secondary" style={{ flex: 1 }}>
+            {p.status === "won" ? `Pledge kept · +${p.payout} coins` : `Pledged ${p.stake} · finish ${p.target} to win ${p.payout}`}
+          </Text>
+        </View>
+      ) : rewards?.pledgeOptions.available ? (
+        <PressScale onPress={onPledge} to={0.985} accessibilityLabel="Pledge coins on this week's target" style={{ marginTop: 14, flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Ionicons name="hand-left-outline" size={15} color={colors.amber} />
+          <Text variant="meta" color="secondary" style={{ flex: 1 }}>Pledge coins on hitting this week's target</Text>
+          <Ionicons name="chevron-forward" size={15} color={colors.textTertiary} />
+        </PressScale>
+      ) : null}
     </Card>
   );
 }

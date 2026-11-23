@@ -4,7 +4,9 @@ import { Alert, Animated, Easing, Modal, Pressable, ScrollView, View } from "rea
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
-import { useWallet } from "@/api/hooks";
+import { errorMessage, invalidateResource, useWallet } from "@/api/hooks";
+import { api } from "@/api/client";
+import { useRewards } from "@/lib/progression";
 import { toast } from "@/components/ui/toast";
 import { customizationItems, type CustomizationItem } from "@/theme/catalog";
 import { useCustomization, useTheme } from "@/theme/theme-provider";
@@ -17,13 +19,15 @@ import { swatchColors } from "@/lib/swatch";
 
 // Coins pay for training and recovery — opening the app earns nothing.
 const EARN_WAYS = [
-  { id: "workout", label: "Finish a workout", detail: "Scales with the work you put in", coins: "+40–120" },
-  { id: "pr", label: "Set a personal record", detail: "Any lift beats its previous best", coins: "+50 each" },
+  { id: "workout", label: "Finish a workout", detail: "40 + 5 per working set · first two each day", coins: "+40–120" },
+  { id: "pr", label: "Set a personal record", detail: "Any lift beats its previous best · up to 3 a session", coins: "+50 each" },
+  { id: "comeback", label: "Come back", detail: "First workout after a week or more off", coins: "+60" },
   { id: "quest", label: "Weekly quests", detail: "Three on Home, reset every Monday", coins: "+120–180" },
   { id: "streak", label: "Weekly streak", detail: "Hit your target at 2 / 4 / 8 / 12 / 26 / 52 weeks", coins: "+60–600" },
+  { id: "pledge", label: "Keep a pledge", detail: "Stake coins on your week — win it back plus 50%", coins: "+75–300" },
   { id: "checkin", label: "Recovery check-in", detail: "Once a day — rest days count too", coins: "+15" },
   { id: "goal", label: "Hit a goal", detail: "Every daily or weekly goal you complete", coins: "+30" },
-  { id: "achievement", label: "Unlock an achievement", detail: "One-off payouts for milestones", coins: "+75–500" },
+  { id: "achievement", label: "Unlock an achievement", detail: "One-off payouts for milestones", coins: "+50–200" },
 ];
 
 // Themes, accent colours and light/dark are free — the store sells the rest.
@@ -47,6 +51,35 @@ function StoreScreen() {
   const [ownedOnly, setOwnedOnly] = useState(false);
   const balance = wallet.data?.balance ?? cz.balance;
   const [celebrate, setCelebrate] = useState<CustomizationItem | null>(null);
+  const rewards = useRewards();
+  const rw = rewards.data;
+  const dealPrice = useMemo(() => new Map((rw?.deals ?? []).map((d) => [d.id, d.dealPrice])), [rw]);
+  const deals = useMemo(() => (rw?.deals ?? []).map((d) => ({ deal: d, item: catalogue.find((i) => i.id === d.id) })).filter((x): x is { deal: (typeof x)["deal"]; item: CustomizationItem } => !!x.item), [rw]);
+  const priceOf = (item: CustomizationItem) => dealPrice.get(item.id) ?? item.price;
+
+  const buyShield = () => {
+    if (!rw) return;
+    const { price, held, max } = rw.shields;
+    if (held >= max) return Alert.alert("Shields full", `You can hold ${max} at most.`);
+    if (balance < price) return Alert.alert("Not enough coins", `A shield costs ${price}. You need ${price - balance} more.`);
+    Alert.alert("Buy a streak shield?", `${price} coins. If you miss a week after your free pass is used, a shield keeps your streak alive.`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: `Buy · ${price}`,
+        onPress: async () => {
+          try {
+            rewards.mutate(await api.rewards.buyShield(rewards.checkinsEnabled));
+            invalidateResource("wallet");
+            wallet.refetch();
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+            toast.success("Shield ready");
+          } catch (e) {
+            toast.error(errorMessage(e as Error));
+          }
+        },
+      },
+    ]);
+  };
   const featured = useMemo(() => catalogue.filter((i) => (i.rarity === "legendary" || i.rarity === "epic") && !cz.isOwned(i.id)).slice(0, 3), [cz]);
 
   const shown = useMemo(() => {
@@ -55,15 +88,17 @@ function StoreScreen() {
   }, [tab, ownedOnly, cz]);
 
   function buy(item: CustomizationItem) {
-    if (balance < item.price) return Alert.alert("Not enough coins", `${item.name} costs ${item.price}. You need ${item.price - balance} more — finish a workout or a weekly quest to earn them.`);
-    Alert.alert(`Unlock ${item.name}?`, `${item.price} coins · you'll have ${balance - item.price} left.`, [
+    const price = priceOf(item);
+    if (balance < price) return Alert.alert("Not enough coins", `${item.name} costs ${price}. You need ${price - balance} more — finish a workout or a weekly quest to earn them.`);
+    Alert.alert(`Unlock ${item.name}?`, `${price} coins${price < item.price ? ` (deal, was ${item.price})` : ""} · you'll have ${balance - price} left.`, [
       { text: "Cancel", style: "cancel" },
       {
-        text: `Unlock · ${item.price}`,
+        text: `Unlock · ${price}`,
         onPress: async () => {
-          const ok = await cz.buy(item, false);
+          const ok = await cz.buy(item, false, price);
           if (ok) {
             wallet.refetch();
+            rewards.refetch();
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
             setCelebrate(item);
           } else toast.error("Couldn't complete the purchase. Try again.");
@@ -75,7 +110,7 @@ function StoreScreen() {
   if (wallet.initialLoading) return <Screen><PageHeader title="Store" /><PageSkeleton /></Screen>;
 
   return (
-    <Screen onRefresh={wallet.reload}>
+    <Screen onRefresh={() => Promise.all([wallet.reload(), rewards.reload()])}>
       <PageHeader title="The store" />
       <Card>
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" }}>
@@ -93,6 +128,46 @@ function StoreScreen() {
         </View>
         <Text variant="meta" color="tertiary" style={{ marginTop: 10 }}>Weekly quests live on Home. Your rank comes from training, not coins.</Text>
       </Card>
+
+      {deals.length ? (
+        <>
+          <SectionHeading title="This week's deals" />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
+            {deals.map(({ deal, item }) => (
+              <Pressable key={item.id} onPress={() => (deal.owned ? undefined : buy(item))} disabled={deal.owned} style={{ width: 170, borderRadius: radius.medium, overflow: "hidden", borderWidth: 1, borderColor: RARITY_COLOR[item.rarity], backgroundColor: colors.surface, opacity: deal.owned ? 0.6 : 1 }}>
+                <LinearGradient colors={swatchColors(item.swatch)} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ height: 64 }} />
+                <View style={{ padding: 12, gap: 4 }}>
+                  <Text numberOfLines={1}>{item.name}</Text>
+                  {deal.owned ? <Text variant="meta" style={{ color: colors.lime }}>Owned</Text> : (
+                    <View style={{ flexDirection: "row", alignItems: "baseline", gap: 6 }}>
+                      <Num size={16} style={{ color: colors.amber }}>{deal.dealPrice}</Num>
+                      <Text variant="meta" color="tertiary" style={{ textDecorationLine: "line-through" }}>{deal.price}</Text>
+                    </View>
+                  )}
+                </View>
+              </Pressable>
+            ))}
+          </ScrollView>
+          <Text variant="meta" color="tertiary" style={{ marginTop: 8 }}>25% off · new picks every Monday</Text>
+        </>
+      ) : null}
+
+      {rw ? (
+        <>
+          <SectionHeading title="Streak shields" />
+          <Card style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+            <Ionicons name="shield-checkmark" size={22} color={colors.cyan} />
+            <View style={{ flex: 1 }}>
+              <Text>{rw.shields.held} of {rw.shields.max} held</Text>
+              <Text variant="meta" color="tertiary">Covers a missed week once your free pass is used. Spent automatically.</Text>
+            </View>
+            <Pressable onPress={buyShield} disabled={rw.shields.held >= rw.shields.max} style={{ height: 36, paddingHorizontal: 14, borderRadius: radius.pill, backgroundColor: colors.btnWhite, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6, opacity: rw.shields.held >= rw.shields.max || balance < rw.shields.price ? 0.5 : 1 }}>
+              <Ionicons name="logo-bitcoin" size={13} color={colors.btnWhiteInk} />
+              <Text style={{ color: colors.btnWhiteInk, fontSize: 13 }}>{rw.shields.price}</Text>
+            </Pressable>
+          </Card>
+        </>
+      ) : null}
 
       {featured.length ? (
         <>
@@ -139,7 +214,7 @@ function StoreScreen() {
                 <Text style={{ fontSize: 15 }} numberOfLines={1}>{item.name}</Text>
                 <Text variant="meta" color="tertiary" numberOfLines={2} style={{ minHeight: 30 }}>{item.detail}</Text>
                 <Label>{item.rarity.toUpperCase()}</Label>
-                {equipped ? <Chip label="Equipped" active /> : owned ? <Chip label="Equip" onPress={async () => { await cz.equip(item); toast.success(`${item.name} equipped`); }} /> : <Pressable onPress={() => buy(item)} style={{ height: 36, borderRadius: radius.pill, backgroundColor: colors.btnWhite, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6, opacity: balance >= item.price ? 1 : 0.5 }}><Ionicons name="logo-bitcoin" size={13} color={colors.btnWhiteInk} /><Text style={{ color: colors.btnWhiteInk, fontSize: 13 }}>{item.price}</Text></Pressable>}
+                {equipped ? <Chip label="Equipped" active /> : owned ? <Chip label="Equip" onPress={async () => { await cz.equip(item); toast.success(`${item.name} equipped`); }} /> : <Pressable onPress={() => buy(item)} style={{ height: 36, borderRadius: radius.pill, backgroundColor: colors.btnWhite, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6, opacity: balance >= priceOf(item) ? 1 : 0.5 }}><Ionicons name="logo-bitcoin" size={13} color={colors.btnWhiteInk} /><Text style={{ color: colors.btnWhiteInk, fontSize: 13 }}>{priceOf(item)}</Text></Pressable>}
               </View>
             </View>
           );

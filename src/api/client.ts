@@ -150,6 +150,14 @@ interface Opts {
 
 let refreshInFlight: Promise<boolean> | null = null;
 
+const TIMEZONE = (() => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+  } catch {
+    return "";
+  }
+})();
+
 async function doRefresh(): Promise<boolean> {
   if (!refreshToken) return false;
   if (!refreshInFlight)
@@ -188,6 +196,8 @@ async function request<R>(path: string, opts: Opts = {}): Promise<R> {
   const url = BASE_URL + path + (qs ? `?${qs}` : "");
 
   const headers: Record<string, string> = { "x-client-platform": "native" };
+  // the server keeps rewards weeks/days in the user's own timezone
+  if (TIMEZONE) headers["x-timezone"] = TIMEZONE;
   if (body !== undefined) headers["content-type"] = "application/json";
   if (auth && accessToken) headers.authorization = `Bearer ${accessToken}`;
 
@@ -423,7 +433,7 @@ export const api = {
     readiness: () => get<T.ReadinessBreakdown>("/progress/readiness"),
     consistency: (weeks?: number) => get<T.ConsistencyReport>("/progress/consistency", { weeks }),
     checkin: (body: T.RecoveryCheckinInput) =>
-      post<{ checkin: T.RecoveryCheckin; readiness: T.ReadinessBreakdown }>("/progress/checkin", body),
+      post<{ checkin: T.RecoveryCheckin; readiness: T.ReadinessBreakdown; coins?: number }>("/progress/checkin", body),
     checkins: () => get<T.RecoveryCheckin[]>("/progress/checkin"),
     nutrition: (date?: string) => get<T.NutritionDay>("/progress/nutrition", { date }),
     nutritionSummary: (days?: number) => get<{ days: T.NutritionDayTotals[] }>("/progress/nutrition/summary", { days }),
@@ -478,8 +488,16 @@ export const api = {
     list: () => get<T.GoalWithProgress[]>("/goals"),
     upsert: (input: T.GoalInput) => post<T.Goal>("/goals", input),
     log: (id: string, value: number, mode: "set" | "increment" = "set") =>
-      post<T.GoalWithProgress>(`/goals/${id}/log`, { value, mode }),
+      post<T.GoalWithProgress & { coins?: number }>(`/goals/${id}/log`, { value, mode }),
     remove: (id: string) => del<void>(`/goals/${id}`),
+  },
+
+  // rewards — streak, rank, quests, shields, pledge, weekly deals (coins are granted server-side)
+  rewards: {
+    state: (checkinsEnabled: boolean) => get<T.RewardsState>("/rewards/state", { checkins: String(checkinsEnabled) }),
+    claimQuest: (id: string, checkinsEnabled: boolean) => post<{ coins: number; state: T.RewardsState }>(`/rewards/quests/${id}/claim`, { checkinsEnabled }),
+    buyShield: (checkinsEnabled: boolean) => post<T.RewardsState>("/rewards/shields", { checkinsEnabled }),
+    pledge: (stake: number, checkinsEnabled: boolean) => post<T.RewardsState>("/rewards/pledge", { stake, checkinsEnabled }),
   },
 
   // store

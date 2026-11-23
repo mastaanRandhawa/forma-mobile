@@ -42,8 +42,6 @@ import {
 import { trainerCue, type CueContext, type CueEvent } from "@/lib/cues";
 import { plateCombo, plateLabel } from "@/lib/plates";
 import { cancelRestAlert, scheduleRestAlert } from "@/lib/reminders";
-import { grantWorkoutRewards } from "@/lib/rewards";
-import { HISTORY_WEEKS, XP_PER_SESSION, XP_PER_TARGET_WEEK, weeklyStreak } from "@/lib/progression";
 import { fmtClock, fmtDuration, fromKg, repRange, saveSessionAsTemplate, startRepeat, toKg, unitLabel, type Units } from "@/lib/workouts";
 import { useEquippedItem, useTheme } from "@/theme/theme-provider";
 import { colors, fonts, radius, shadow } from "@/theme/tokens";
@@ -69,9 +67,13 @@ type Summary = {
   sets: number;
   prs: string[];
   coins: number;
+  /** what the server paid, line by line */
+  coinLines: { label: string; amount: number }[];
   /** rank XP this session earned, and the weekly streak after it */
   xp: number;
   streakWeeks: number;
+  targetHit: boolean;
+  rank: string | null;
   muscles: string[];
   skipped: number;
   vsLast: { volumeKg: number; durationSec: number } | null;
@@ -473,10 +475,8 @@ export default function ActiveWorkout() {
       const done = await api.sessions.finish(s.id, { durationSeconds: durationSec });
       cancelRestAlert();
       const prs = (done.personalRecords ?? []).map((p) => `${p.exercise?.name ?? "Lift"} — ${p.recordType.replace(/_/g, " ")}`);
-      // weekly streak after this session: the milestone pays only on the session that hits the target
-      const report = await api.progress.consistency(HISTORY_WEEKS).catch(() => null);
-      const streak = weeklyStreak(report, user?.trainingFrequencyTarget);
-      const coins = await grantWorkoutRewards({ sessionId: s.id, volumeKg: done.totalVolumeKg, prs: prs.length, streakWeeks: streak.weeks, targetJustHit: streak.thisWeek === streak.target });
+      // coins, XP and the weekly streak are decided by the server and come back on the finish response
+      const rewards = done.rewards ?? null;
       const muscles = [...new Set((done.muscleActivations ?? []).filter((m) => m.role === "primary").map((m) => m.muscleGroup?.name).filter(Boolean) as string[])].slice(0, 6);
       const last = priorRef.current.find((x) => x.name === s.name && x.id !== s.id);
       let protein: Summary["protein"] = null;
@@ -490,9 +490,12 @@ export default function ActiveWorkout() {
         volumeKg: done.totalVolumeKg,
         sets: done.performances.reduce((n, p) => n + p.sets.filter((x) => x.completedAt && !x.isWarmup).length, 0),
         prs,
-        coins,
-        xp: XP_PER_SESSION + (streak.thisWeek === streak.target ? XP_PER_TARGET_WEEK : 0),
-        streakWeeks: streak.weeks,
+        coins: rewards?.coins ?? 0,
+        coinLines: rewards?.lines ?? [],
+        xp: rewards?.xp ?? 0,
+        streakWeeks: rewards?.streak.weeks ?? 0,
+        targetHit: rewards?.targetHit ?? false,
+        rank: rewards ? `Rank ${rewards.rank.rank} · ${rewards.rank.title}` : null,
         muscles: muscles.length ? muscles : [...new Set(done.performances.filter((p) => p.sets.some((x) => x.completedAt)).map((p) => p.exercise.bodyPart ?? p.exercise.category).filter(Boolean) as string[])].slice(0, 6),
         // replaced exercises are recorded as skipped + a swappedFrom entry; only count real skips
         skipped: Math.max(0, flow.skipped.length - Object.keys(flow.swappedFrom).length),
@@ -1001,24 +1004,38 @@ function SummaryView({ summary, units, look, savedTpl, onSaveTpl, onRepeat, onDo
             </View>
           ))}
         </View>
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 8, padding: 12, borderRadius: radius.medium, backgroundColor: "rgba(255,255,255,0.06)" }}>
-            <Ionicons name="trending-up" size={16} color={colors.pink} />
-            <Num size={16}>+{s.xp}</Num>
-            <Text color="secondary">rank XP</Text>
-          </View>
-          {s.coins > 0 ? (
-            <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 8, padding: 12, borderRadius: radius.medium, backgroundColor: "rgba(255,182,97,0.12)" }}>
-              <Ionicons name="logo-bitcoin" size={16} color={colors.amber} />
-              <Num size={16} style={{ color: colors.amber }}>+{s.coins}</Num>
-              <Text color="secondary">coins</Text>
+        {s.xp > 0 || s.coins > 0 ? (
+          <View style={{ flexDirection: "row", gap: 10 }}>
+            <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 8, padding: 12, borderRadius: radius.medium, backgroundColor: "rgba(255,255,255,0.06)" }}>
+              <Ionicons name="trending-up" size={16} color={colors.pink} />
+              <Num size={16}>+{s.xp}</Num>
+              <Text color="secondary">rank XP</Text>
             </View>
-          ) : null}
-        </View>
-        {s.streakWeeks > 0 ? (
+            {s.coins > 0 ? (
+              <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 8, padding: 12, borderRadius: radius.medium, backgroundColor: "rgba(255,182,97,0.12)" }}>
+                <Ionicons name="logo-bitcoin" size={16} color={colors.amber} />
+                <Num size={16} style={{ color: colors.amber }}>+{s.coins}</Num>
+                <Text color="secondary">coins</Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+        {s.coinLines.length > 1 ? (
+          <View style={{ gap: 4, paddingHorizontal: 4 }}>
+            {s.coinLines.map((l) => (
+              <View key={l.label} style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                <Text variant="meta" color="secondary">{l.label}</Text>
+                <Num size={13} style={{ color: colors.amber }}>+{l.amount}</Num>
+              </View>
+            ))}
+          </View>
+        ) : null}
+        {s.streakWeeks > 0 || s.rank ? (
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 4 }}>
             <Ionicons name="flame" size={15} color={colors.amber} />
-            <Text color="secondary">{s.streakWeeks}-week streak{s.xp > XP_PER_SESSION ? " · weekly target hit" : ""}</Text>
+            <Text color="secondary" style={{ flex: 1 }}>
+              {[s.streakWeeks > 0 ? `${s.streakWeeks}-week streak${s.targetHit ? " · weekly target hit" : ""}` : null, s.rank].filter(Boolean).join(" · ")}
+            </Text>
           </View>
         ) : null}
         {s.prs.length ? (

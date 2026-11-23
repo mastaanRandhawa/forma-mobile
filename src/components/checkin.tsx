@@ -16,7 +16,6 @@ import { Button, Chip } from "./ui/controls";
 import { Sheet, SliderBar } from "./ui/extra";
 import { SoftSurface } from "./ui/surface";
 import { toast } from "./ui/toast";
-import { grantCheckinReward } from "@/lib/rewards";
 import { Label, Num, Text } from "./ui/text";
 
 const isToday = (iso?: string) => !!iso && new Date(iso).toDateString() === new Date().toDateString();
@@ -64,8 +63,9 @@ export function CheckinSheet({ visible, onClose, onSaved, seed, primaryLabel = "
       invalidateResource("checkins");
       invalidateResource("readiness");
       invalidateResource("dashboard");
-      toast.success(`Readiness ${r.readiness.score}`);
-      void grantCheckinReward();
+      invalidateResource("rewards");
+      if (r.coins) toast.coins(r.coins, `Readiness ${r.readiness.score} · check-in`);
+      else toast.success(`Readiness ${r.readiness.score}`);
       onSaved?.(r.readiness);
       onClose();
     } catch (e) {

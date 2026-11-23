@@ -1,7 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { auth as authClient, session as tokenStore } from "@/api/client";
 import { invalidateResource } from "@/api/hooks";
-import { setRewardsUser } from "@/lib/rewards";
 import type { User } from "@/api/types";
 
 export type AuthStatus = "loading" | "authed" | "unverified" | "anon";
@@ -29,7 +28,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (prev?.id !== u?.id) invalidateResource();
       return u;
     });
-    setRewardsUser(u?.id ?? null);
     setStatus(statusFor(u));
   }, []);
 
