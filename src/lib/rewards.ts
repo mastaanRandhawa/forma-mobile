@@ -1,15 +1,14 @@
 /**
  * Coin economy — ported from the website's lib/rewards.ts + lib/wallet.ts.
  *
- * The backend only awards coins for achievements; everything else (daily
- * check-in, finished workouts, PRs, streak milestones, goals, weekly
- * challenges) is credited by the client through POST /store/wallet/earn — the
+ * The backend only awards coins for achievements; everything else (recovery
+ * check-ins, finished workouts, PRs, weekly-streak milestones, goals, weekly
+ * quests) is credited by the client through POST /store/wallet/earn — the
  * same contract the website uses. Every grant carries an idempotency key that
  * is remembered on-device so a reward is never paid twice from this phone.
  *
- * Difference from the web: challenge progress is computed from the user's real
- * session history (the web seeds demo progress), and the camera-form challenge
- * is left out because form tracking isn't available on mobile yet.
+ * Rank (who you are) lives in ./progression and comes from training alone;
+ * coins here are only what you spend in the store.
  */
 import { api } from "@/api/client";
 import { invalidateResource } from "@/api/hooks";
@@ -82,13 +81,15 @@ export function subscribeRewards(fn: () => void) {
 }
 
 // ── grants ──────────────────────────────────────────────────────────────────
-const STREAK_MILESTONES: Record<number, number> = { 3: 30, 7: 70, 14: 120, 30: 220, 60: 320, 100: 400 };
+// Coins pay for training and recovery, never for just opening the app.
+/** Weekly-streak milestones, paid the week the streak reaches them (re-earnable after a reset). */
+const WEEK_STREAK_MILESTONES: Record<number, number> = { 2: 60, 4: 120, 8: 220, 12: 320, 26: 450, 52: 600 };
 
-/** Daily check-in bonus — safe to call on every app open. */
-export const grantDailyBonus = () => earn(15, "Daily check-in", `daily:${todayKey()}`);
+/** Recovery check-in — once per day, so rest days earn too. */
+export const grantCheckinReward = () => earn(15, "Recovery check-in", `checkin:${todayKey()}`);
 
 /** Called when a workout is finished. Returns the total coins granted. */
-export async function grantWorkoutRewards(input: { sessionId: string; volumeKg: number; prs: number; streakDays?: number }): Promise<number> {
+export async function grantWorkoutRewards(input: { sessionId: string; volumeKg: number; prs: number; streakWeeks?: number; targetJustHit?: boolean }): Promise<number> {
   let total = 0;
   const volumeLb = input.volumeKg * 2.20462;
   const base = 40 + Math.min(80, Math.round(volumeLb / 125));
@@ -97,16 +98,16 @@ export async function grantWorkoutRewards(input: { sessionId: string; volumeKg: 
     const n = input.prs * 50;
     if (await earn(n, `${input.prs} personal record${input.prs > 1 ? "s" : ""}`, `workout-pr:${input.sessionId}`)) total += n;
   }
-  const bonus = input.streakDays ? STREAK_MILESTONES[input.streakDays] : undefined;
-  if (bonus && (await earn(bonus, `${input.streakDays}-day streak`, `streak:${input.streakDays}`))) total += bonus;
+  const bonus = input.targetJustHit && input.streakWeeks ? WEEK_STREAK_MILESTONES[input.streakWeeks] : undefined;
+  if (bonus && (await earn(bonus, `${input.streakWeeks}-week streak`, `wstreak:${input.streakWeeks}:${weekKey()}`))) total += bonus;
   return total;
 }
 
 /** Goal completion — once per goal per period. */
 export const grantGoalReward = (goalId: string, periodKey: string, label: string) => earn(30, `Goal · ${label}`, `goal:${goalId}:${periodKey}`);
 
-// ── weekly challenges ───────────────────────────────────────────────────────
-export interface Challenge {
+// ── weekly quests ───────────────────────────────────────────────────────────
+export interface Quest {
   id: string;
   title: string;
   detail: string;
@@ -119,46 +120,26 @@ export interface Challenge {
   claimed: boolean;
 }
 
-/** Build this week's challenges from real history. `claimed` comes from the grant log. */
-export async function computeChallenges(input: { sessions: WorkoutSession[]; musclesThisWeek: number; weeklyTarget: number; metric: boolean }): Promise<Challenge[]> {
+/**
+ * This week's three quests, built from real history. `claimed` comes from the
+ * grant log. Ids are stable across versions so earlier claims still count.
+ */
+export async function computeQuests(input: { sessions: WorkoutSession[]; musclesThisWeek: number; weeklyTarget: number; checkinDays: number; checkinsEnabled: boolean }): Promise<Quest[]> {
   await load();
   const wk = weekKey();
   const monday = new Date();
   monday.setHours(0, 0, 0, 0);
   monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
   const week = input.sessions.filter((s) => Date.parse(s.startedAt) >= monday.getTime());
-  const volKg = week.reduce((n, s) => n + (s.totalVolumeKg ?? 0), 0);
-  const early = week.filter((s) => new Date(s.startedAt).getHours() < 9).length;
-  const volTarget = input.metric ? 54000 : 120000;
-  const volCurrent = Math.round(input.metric ? volKg : volKg * 2.20462);
-  const target = Math.max(2, input.weeklyTarget || 4);
-  const rows: Omit<Challenge, "done" | "claimed">[] = [
-    { id: "ch-consistency", title: "Show up", detail: `Complete ${target} workouts this week`, target, current: week.length, unit: "workouts", reward: 180, tone: "pink" },
-    { id: "ch-volume", title: "Move weight", detail: `Log ${volTarget.toLocaleString()} ${input.metric ? "kg" : "lb"} of total volume`, target: volTarget, current: volCurrent, unit: input.metric ? "kg" : "lb", reward: 220, tone: "cyan" },
-    { id: "ch-early", title: "Early sets", detail: "Train before 9am twice", target: 2, current: early, unit: "sessions", reward: 150, tone: "amber" },
+  const target = Math.max(1, input.weeklyTarget || 3);
+  const rows: Omit<Quest, "done" | "claimed">[] = [
+    { id: "ch-consistency", title: "Show up", detail: `Finish ${target} workout${target > 1 ? "s" : ""} this week`, target, current: week.length, unit: "workouts", reward: 180, tone: "pink" },
+    input.checkinsEnabled
+      ? { id: "ch-checkin", title: "Listen in", detail: "Do a recovery check-in on 3 days", target: 3, current: input.checkinDays, unit: "days", reward: 120, tone: "lime" }
+      : { id: "ch-early", title: "Early sets", detail: "Train before 9am twice", target: 2, current: week.filter((s) => new Date(s.startedAt).getHours() < 9).length, unit: "sessions", reward: 150, tone: "amber" },
     { id: "ch-explorer", title: "Mix it up", detail: "Train 5 different muscle groups", target: 5, current: input.musclesThisWeek, unit: "groups", reward: 160, tone: "violet" },
   ];
   return rows.map((c) => ({ ...c, current: Math.min(c.target, c.current), done: c.current >= c.target, claimed: Boolean(state.grants[`${c.id}:${wk}`]) }));
 }
 
-export const claimChallenge = (c: Challenge) => (c.done && !c.claimed ? earn(c.reward, `Challenge · ${c.title}`, `${c.id}:${weekKey()}`) : Promise.resolve(false));
-
-// ── collector levels (lifetime earned) ──────────────────────────────────────
-export const LEVELS = [
-  { level: 1, title: "Rookie", at: 0 },
-  { level: 2, title: "Regular", at: 400 },
-  { level: 3, title: "Committed", at: 1000 },
-  { level: 4, title: "Dedicated", at: 2000 },
-  { level: 5, title: "Relentless", at: 3600 },
-  { level: 6, title: "Elite", at: 6000 },
-  { level: 7, title: "Legend", at: 9500 },
-  { level: 8, title: "Mythic", at: 15000 },
-];
-
-export function levelFor(lifetime: number) {
-  let current = LEVELS[0];
-  for (const l of LEVELS) if (lifetime >= l.at) current = l;
-  const next = LEVELS.find((l) => l.at > current.at) ?? null;
-  const span = next ? next.at - current.at : 1;
-  return { ...current, next, toNext: next ? next.at - lifetime : 0, pct: next ? Math.min(1, (lifetime - current.at) / span) : 1 };
-}
+export const claimQuest = (q: Quest) => (q.done && !q.claimed ? earn(q.reward, `Quest · ${q.title}`, `${q.id}:${weekKey()}`) : Promise.resolve(false));

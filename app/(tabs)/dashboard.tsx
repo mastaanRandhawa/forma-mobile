@@ -2,7 +2,7 @@
  * Home — one scrolling column in priority order:
  *   1 greeting + readiness (one compact component; tap a metric for its detail)
  *   2 today's workout, the primary focus
- *   3 weekly progress
+ *   3 this week: sessions, weekly streak and the three weekly quests
  *   4 one Kai insight
  *   5 goals and recent records as previews that link to their screens
  * Volume detail lives in Progress; achievements live in Records.
@@ -12,11 +12,13 @@ import { Animated, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { api } from "@/api/client";
-import { errorMessage, invalidateResource, useConsistency, useDashboard, useGoals, usePlannedWorkouts, useReadiness, useSessionHistory } from "@/api/hooks";
+import { errorMessage, invalidateResource, useConsistency, useDashboard, useGoals, useMuscleMap, usePlannedWorkouts, useReadiness, useSessionHistory } from "@/api/hooks";
 import { usePrefs, useProgression } from "@/api/settings";
 import type { GoalWithProgress } from "@/api/types";
 import { useAuth } from "@/auth/auth-provider";
 import { fromKg, unitLabel } from "@/lib/workouts";
+import { useTrainingProgress } from "@/lib/progression";
+import { claimQuest, computeQuests, subscribeRewards, type Quest } from "@/lib/rewards";
 import { useEquippedItem, useTheme } from "@/theme/theme-provider";
 import { colors, radius, type Tone } from "@/theme/tokens";
 import { CheckinSheet, useCheckins, useTodayCheckin } from "@/components/checkin";
@@ -24,7 +26,7 @@ import { GoalLogSheet } from "@/components/goal-log";
 import { Quiet } from "@/components/quiet";
 import { useActiveSession } from "@/components/workout-bar";
 import { Screen } from "@/components/ui/screen";
-import { Button, ProgressBar, Ring, SectionHeading } from "@/components/ui/controls";
+import { Button, Chip, ProgressBar, Ring, SectionHeading } from "@/components/ui/controls";
 import { Card, EmptyState, ErrorState, MiniBars, RingValue, ScrubChart, Sheet, Skel } from "@/components/ui/extra";
 import { Fill } from "@/components/ui/gradient";
 import { PressScale } from "@/components/ui/pressable";
@@ -66,6 +68,10 @@ export default function Dashboard() {
   const checkins = useCheckins();
   const today = useTodayCheckin();
   const active = useActiveSession();
+  const muscles = useMuscleMap("week");
+  const training = useTrainingProgress();
+  const [quests, setQuests] = useState<Quest[] | null>(null);
+  const [questTick, setQuestTick] = useState(0);
   const look = useEquippedItem("avatar")?.id;
   const d = dash.data;
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -76,7 +82,7 @@ export default function Dashboard() {
 
   const refresh = async () => {
     invalidateResource();
-    await Promise.all([dash, hist, goals, readiness, cons, planned, checkins, active].map((r) => r.reload()));
+    await Promise.all([dash, hist, goals, readiness, cons, planned, checkins, active, muscles, training].map((r) => r.reload()));
   };
 
   const sessions = useMemo(() => hist.data ?? [], [hist.data]);
@@ -89,6 +95,26 @@ export default function Dashboard() {
     }
     return out as boolean[];
   }, [sessions]);
+
+  // weekly quests — recomputed when history changes or a reward is granted elsewhere
+  useEffect(() => subscribeRewards(() => setQuestTick((t) => t + 1)), []);
+  useEffect(() => {
+    if (!hist.data) return;
+    const monday = weekStart(0).getTime();
+    const checkinDays = new Set((checkins.data ?? []).filter((c) => Date.parse(c.recordedAt) >= monday).map((c) => new Date(c.recordedAt).toDateString())).size;
+    let live = true;
+    void computeQuests({
+      sessions: hist.data,
+      musclesThisWeek: (muscles.data?.muscles ?? []).filter((m) => m.score > 0).length,
+      weeklyTarget: training.streak.target,
+      checkinDays,
+      checkinsEnabled: prefs.recovery.manualCheckins,
+    }).then((q) => live && setQuests(q));
+    return () => { live = false; };
+  }, [hist.data, muscles.data, checkins.data, training.streak.target, prefs.recovery.manualCheckins, questTick]);
+  const claim = async (q: Quest) => {
+    if (!(await claimQuest(q))) toast.error("Couldn't claim — check your connection.");
+  };
 
   const ready = d ? d.readinessAvailable !== "unavailable" : false;
   const weekly = d?.weeklyRing ?? { done: 0, target: 0 };
@@ -187,13 +213,13 @@ export default function Dashboard() {
     ? "A workout is in progress"
     : todayW
       ? `${todayW.name} today`
-      : (d?.streakDays ?? 0) > 0
-        ? `${d!.streakDays}-day streak — keep it going`
+      : training.streak.weeks > 0
+        ? `${training.streak.weeks}-week streak — keep it going`
         : "Ready when you are";
 
   // the single Kai insight: a server insight if there is one, else the most relevant nudge
   const serverInsight = prog.has("insights") ? (d?.insights ?? []).find((i) => i.id !== dismissed) : undefined;
-  const nudge = d && !hasRecovery ? "No recovery data yet. A quick check-in lets me score your readiness before each session." : d && d.streakDays === 0 && sessions.length > 0 ? "Your streak has lapsed. A session today restarts it." : null;
+  const nudge = d && !hasRecovery ? "No recovery data yet. A quick check-in lets me score your readiness before each session." : !training.loading && training.streak.weeks === 0 && sessions.length > 0 ? `Hit ${training.streak.target} session${training.streak.target > 1 ? "s" : ""} this week to start a weekly streak. Rest days don't break it.` : null;
   const kai = serverInsight ? { label: serverInsight.category, title: serverInsight.title, text: serverInsight.body, id: serverInsight.id } : { label: "Kai", title: undefined, text: nudge ?? d?.trainerMessage ?? "Ask me anything about your training.", id: null };
 
   return (
@@ -245,7 +271,7 @@ export default function Dashboard() {
 
         <View style={{ marginBottom: 20 }}>
           <Quiet widgetKey="workout-streak">
-            <WeekCard done={weekly.done} target={weekly.target} streak={d?.streakDays ?? 0} trained={trained} onOpen={() => router.push(prog.has("progress_basic") ? "/progress" : "/workouts")} />
+            <WeekCard done={weekly.done} target={weekly.target} streak={training.streak.weeks} passReady={training.streak.passReady} trained={trained} quests={quests} onClaim={claim} onOpen={() => router.push(prog.has("progress_basic") ? "/progress" : "/workouts")} />
           </Quiet>
         </View>
 
@@ -408,7 +434,7 @@ function TodayCard({ loading, activeName, name, meta, muscles, upcoming, generat
   );
 }
 
-function WeekCard({ done, target, streak, trained, onOpen }: { done: number; target: number; streak: number; trained: boolean[]; onOpen: () => void }) {
+function WeekCard({ done, target, streak, passReady, trained, quests, onClaim, onOpen }: { done: number; target: number; streak: number; passReady: boolean; trained: boolean[]; quests: Quest[] | null; onClaim: (q: Quest) => void; onOpen: () => void }) {
   const left = target ? Math.max(0, target - done) : 0;
   return (
     <Card variant="compact" style={{ marginBottom: 0 }}>
@@ -423,7 +449,10 @@ function WeekCard({ done, target, streak, trained, onOpen }: { done: number; tar
         </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
           <Flame active={streak > 0} />
-          <Text variant="meta" color="secondary">{streak > 0 ? `${streak}-day streak` : "No streak"}</Text>
+          <View>
+            <Text variant="meta" color="secondary">{streak > 0 ? `${streak}-week streak` : "No streak yet"}</Text>
+            {streak > 0 ? <Text variant="meta" color="tertiary" style={{ fontSize: 11 }}>{passReady ? "Free pass ready" : "Free pass used"}</Text> : null}
+          </View>
         </View>
       </View>
       <View style={{ marginTop: 12 }}><ProgressBar pct={target ? (done / target) * 100 : 0} tone="pink" /></View>
@@ -437,7 +466,38 @@ function WeekCard({ done, target, streak, trained, onOpen }: { done: number; tar
           </View>
         ))}
       </View>
+      <View style={{ marginTop: 16, paddingTop: 14, borderTopWidth: 1, borderTopColor: colors.lineSoft, gap: 12 }}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+          <Label>WEEKLY QUESTS</Label>
+          <Text variant="meta" color="tertiary">Resets Monday</Text>
+        </View>
+        {quests === null ? [0, 1, 2].map((i) => <Skel key={i} h={36} r={12} />) : quests.map((q) => <QuestRow key={q.id} q={q} onClaim={() => onClaim(q)} />)}
+      </View>
     </Card>
+  );
+}
+
+function QuestRow({ q, onClaim }: { q: Quest; onClaim: () => void }) {
+  return (
+    <View style={{ gap: 6 }} accessibilityLabel={`${q.title}: ${q.detail}. ${q.current} of ${q.target} ${q.unit}. ${q.reward} coins${q.claimed ? ", claimed" : ""}`}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <View style={{ flex: 1 }}>
+          <Text numberOfLines={1}>{q.title}</Text>
+          <Text variant="meta" color="tertiary" numberOfLines={1}>{q.detail}</Text>
+        </View>
+        {q.claimed ? (
+          <Ionicons name="checkmark-circle" size={20} color={colors.lime} />
+        ) : q.done ? (
+          <Chip label={`Claim +${q.reward}`} active onPress={onClaim} />
+        ) : (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+            <Ionicons name="logo-bitcoin" size={12} color={colors.amber} />
+            <Num size={13} style={{ color: colors.amber }}>{q.reward}</Num>
+          </View>
+        )}
+      </View>
+      {q.claimed ? null : <ProgressBar pct={(q.current / q.target) * 100} tone={q.tone} height={4} />}
+    </View>
   );
 }
 

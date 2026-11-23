@@ -4,9 +4,7 @@ import { Alert, Animated, Easing, Modal, Pressable, ScrollView, View } from "rea
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
-import { useMuscleMap, useSessionHistory, useWallet } from "@/api/hooks";
-import { useAuth } from "@/auth/auth-provider";
-import { claimChallenge, computeChallenges, levelFor, type Challenge } from "@/lib/rewards";
+import { useWallet } from "@/api/hooks";
 import { toast } from "@/components/ui/toast";
 import { customizationItems, type CustomizationItem } from "@/theme/catalog";
 import { useCustomization, useTheme } from "@/theme/theme-provider";
@@ -17,14 +15,14 @@ import { Card, PageHeader, PageSkeleton } from "@/components/ui/extra";
 import { Label, Num, Text } from "@/components/ui/text";
 import { swatchColors } from "@/lib/swatch";
 
+// Coins pay for training and recovery — opening the app earns nothing.
 const EARN_WAYS = [
-  { id: "workout", label: "Finish a workout", detail: "Reward scales with volume and completion", coins: "+40–120" },
-  { id: "form", label: "Clean form session", detail: "Average form above 90%", coins: "+25" },
+  { id: "workout", label: "Finish a workout", detail: "Scales with the work you put in", coins: "+40–120" },
   { id: "pr", label: "Set a personal record", detail: "Any lift beats its previous best", coins: "+50 each" },
-  { id: "daily", label: "Daily check-in", detail: "Open Forma and log how you feel", coins: "+15" },
-  { id: "streak", label: "Keep your streak", detail: "Bonuses at 3 / 7 / 14 / 30 / 60 / 100 days", coins: "+30–400" },
-  { id: "goal", label: "Hit a goal", detail: "Every daily or weekly goal you complete", coins: "+20–60" },
-  { id: "week", label: "Weekly training target", detail: "Reach your planned sessions for the week", coins: "+90" },
+  { id: "quest", label: "Weekly quests", detail: "Three on Home, reset every Monday", coins: "+120–180" },
+  { id: "streak", label: "Weekly streak", detail: "Hit your target at 2 / 4 / 8 / 12 / 26 / 52 weeks", coins: "+60–600" },
+  { id: "checkin", label: "Recovery check-in", detail: "Once a day — rest days count too", coins: "+15" },
+  { id: "goal", label: "Hit a goal", detail: "Every daily or weekly goal you complete", coins: "+30" },
   { id: "achievement", label: "Unlock an achievement", detail: "One-off payouts for milestones", coins: "+75–500" },
 ];
 
@@ -48,27 +46,8 @@ function StoreScreen() {
   const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("all");
   const [ownedOnly, setOwnedOnly] = useState(false);
   const balance = wallet.data?.balance ?? cz.balance;
-  const { user } = useAuth();
-  const hist = useSessionHistory();
-  const muscles = useMuscleMap("week");
-  const [challenges, setChallenges] = useState<Challenge[] | null>(null);
   const [celebrate, setCelebrate] = useState<CustomizationItem | null>(null);
-  // lifetime ≈ what you hold + what you've spent on owned cosmetics (the API has no lifetime total)
-  const lifetime = balance + customizationItems.filter((i) => i.price > 0 && cz.isOwned(i.id)).reduce((n, i) => n + i.price, 0);
-  const lvl = levelFor(lifetime);
   const featured = useMemo(() => catalogue.filter((i) => (i.rarity === "legendary" || i.rarity === "epic") && !cz.isOwned(i.id)).slice(0, 3), [cz]);
-
-  useEffect(() => {
-    if (!hist.data) return;
-    void computeChallenges({ sessions: hist.data, musclesThisWeek: (muscles.data?.muscles ?? []).filter((m) => m.score > 0).length, weeklyTarget: user?.trainingFrequencyTarget ?? 4, metric: user?.unitPreference === "metric" }).then(setChallenges);
-  }, [hist.data, muscles.data, user]);
-
-  const claim = async (c: Challenge) => {
-    if (await claimChallenge(c)) {
-      wallet.refetch();
-      setChallenges((cur) => cur?.map((x) => (x.id === c.id ? { ...x, claimed: true } : x)) ?? null);
-    } else toast.error("Couldn't claim — check your connection.");
-  };
 
   const shown = useMemo(() => {
     const group = TABS.find((t) => t.id === tab)?.group;
@@ -76,7 +55,7 @@ function StoreScreen() {
   }, [tab, ownedOnly, cz]);
 
   function buy(item: CustomizationItem) {
-    if (balance < item.price) return Alert.alert("Not enough coins", `${item.name} costs ${item.price}. You need ${item.price - balance} more — finish a workout or hit a goal to earn them.`);
+    if (balance < item.price) return Alert.alert("Not enough coins", `${item.name} costs ${item.price}. You need ${item.price - balance} more — finish a workout or a weekly quest to earn them.`);
     Alert.alert(`Unlock ${item.name}?`, `${item.price} coins · you'll have ${balance - item.price} left.`, [
       { text: "Cancel", style: "cancel" },
       {
@@ -96,42 +75,24 @@ function StoreScreen() {
   if (wallet.initialLoading) return <Screen><PageHeader title="Store" /><PageSkeleton /></Screen>;
 
   return (
-    <Screen onRefresh={() => Promise.all([wallet.reload(), hist.reload()])}>
-      <PageHeader title="The store" right={<View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}><Ionicons name="logo-bitcoin" size={16} color={colors.amber} /><Num size={18}>{balance.toLocaleString()}</Num></View>} />
+    <Screen onRefresh={wallet.reload}>
+      <PageHeader title="The store" />
       <Card>
-        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" }}>
           <View>
-            <Label>LEVEL {lvl.level} · {lvl.title.toUpperCase()}</Label>
-            <Num size={28} style={{ marginTop: 6 }}>{lifetime.toLocaleString()}</Num>
-            <Text variant="meta" color="tertiary">coins earned all-time</Text>
+            <Label>BALANCE</Label>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 }}>
+              <Ionicons name="logo-bitcoin" size={22} color={colors.amber} />
+              <Num size={28}>{balance.toLocaleString()}</Num>
+            </View>
           </View>
           <View style={{ alignItems: "flex-end" }}>
             <Num size={18} style={{ color: colors.amber }}>+{wallet.data?.earnedThisWeek ?? 0}</Num>
             <Text variant="meta" color="tertiary">this week</Text>
           </View>
         </View>
-        <View style={{ marginTop: 12, gap: 6 }}>
-          <ProgressBar pct={lvl.pct * 100} tone="amber" height={6} />
-          <Text variant="meta" color="tertiary">{lvl.next ? `${lvl.toNext.toLocaleString()} to ${lvl.next.title}` : "Max level reached"}</Text>
-        </View>
+        <Text variant="meta" color="tertiary" style={{ marginTop: 10 }}>Weekly quests live on Home. Your rank comes from training, not coins.</Text>
       </Card>
-
-      <SectionHeading title="Weekly challenges" />
-      {challenges === null ? <Text color="tertiary">Loading challenges…</Text> : challenges.map((c) => (
-        <Card key={c.id} style={{ marginBottom: 10, padding: 16 }}>
-          <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 10 }}>
-            <View style={{ flex: 1 }}><Text>{c.title}</Text><Text variant="meta" color="tertiary">{c.detail}</Text></View>
-            <Num size={15} style={{ color: colors.amber }}>+{c.reward}</Num>
-          </View>
-          <View style={{ marginTop: 10, gap: 6 }}>
-            <ProgressBar pct={(c.current / c.target) * 100} tone={c.tone} height={6} />
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-              <Text variant="meta" color="tertiary">{c.current.toLocaleString()} / {c.target.toLocaleString()} {c.unit}</Text>
-              {c.claimed ? <Text variant="meta" style={{ color: colors.lime }}>Claimed ✓</Text> : c.done ? <Chip label="Claim" active onPress={() => claim(c)} /> : <Text variant="meta" color="tertiary">Resets Monday</Text>}
-            </View>
-          </View>
-        </Card>
-      ))}
 
       {featured.length ? (
         <>

@@ -9,7 +9,8 @@ import { useCustomization, useTheme } from "@/theme/theme-provider";
 import { THEME_MAP } from "@/theme/themes";
 import { colors } from "@/theme/tokens";
 import { Screen } from "@/components/ui/screen";
-import { Button, SectionHeading } from "@/components/ui/controls";
+import { Button, ProgressBar, SectionHeading } from "@/components/ui/controls";
+import { useTrainingProgress } from "@/lib/progression";
 import { Card, SettingRow } from "@/components/ui/extra";
 import { Label, Num, Text } from "@/components/ui/text";
 
@@ -33,6 +34,7 @@ export default function More() {
   const cz = useCustomization();
   const locked = (i: Item) => (i.feature ? !prog.has(i.feature) : false);
   const wallet = useWallet();
+  const { rank, streak } = useTrainingProgress();
   const notes = useNotifications();
   const unread = notes.data?.unreadCount ?? 0;
   const confirmSignOut = () =>
@@ -52,6 +54,25 @@ export default function More() {
           <Text variant="meta" color="tertiary" style={{ marginTop: 6 }}>Theme · {THEME_MAP[cz.equipped.theme]?.name ?? "Default"}</Text>
         </Card>
       </Pressable>
+      <Card>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <View style={{ flex: 1 }}>
+            <Label>RANK {rank.rank}</Label>
+            <Text variant="heading">{rank.title}</Text>
+          </View>
+          <View style={{ alignItems: "flex-end" }}>
+            <Num size={18}>{rank.xp.toLocaleString()}</Num>
+            <Text variant="meta" color="tertiary">XP · past year</Text>
+          </View>
+        </View>
+        <View style={{ marginTop: 12, gap: 6 }}>
+          <ProgressBar pct={rank.pct * 100} tone="pink" height={6} />
+          <Text variant="meta" color="tertiary">
+            {rank.next ? `${rank.toNext.toLocaleString()} XP to ${rank.next.title}` : "Top rank"} · {streak.weeks > 0 ? `${streak.weeks}-week streak` : "no streak yet"}
+          </Text>
+        </View>
+        <Text variant="meta" color="tertiary" style={{ marginTop: 8 }}>Earned by training: +100 per workout, +150 for every week you hit your target.</Text>
+      </Card>
       <Pressable onPress={() => (prog.has("store") ? router.push("/store") : undefined)} disabled={!prog.has("store")}>
         <Card style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
           <Ionicons name="logo-bitcoin" size={22} color={colors.amber} />
@@ -59,7 +80,7 @@ export default function More() {
             <Num size={20}>{(wallet.data?.balance ?? 0).toLocaleString()}</Num>
             <Text variant="meta" color="tertiary">coins · +{wallet.data?.earnedThisWeek ?? 0} this week</Text>
           </View>
-          {prog.has("store") ? <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} /> : <Text variant="meta" color="tertiary">Store unlocks as you train</Text>}
+          {prog.has("store") ? <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} /> : <Text variant="meta" color="tertiary">Store opens after your first workout</Text>}
         </Card>
       </Pressable>
 
