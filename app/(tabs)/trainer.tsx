@@ -11,7 +11,7 @@ import { useCustomization, useEquippedItem, useTheme } from "@/theme/theme-provi
 import { customizationItems } from "@/theme/catalog";
 import { swatchColors } from "@/lib/swatch";
 import { colors, fonts, radius } from "@/theme/tokens";
-import { Atmosphere } from "@/components/ui/screen";
+import { Atmosphere, FocusScene } from "@/components/ui/screen";
 import { Button, Chip } from "@/components/ui/controls";
 import { ActionMenu, Card, ErrorState, Sheet, Skel, SliderBar } from "@/components/ui/extra";
 import { toast } from "@/components/ui/toast";
@@ -164,7 +164,7 @@ export default function TrainerTab() {
   const ownedLooks = customizationItems.filter((i) => i.slot === "avatar" && cz.isOwned(i.id));
 
   return (
-    <View style={{ flex: 1 }}>
+    <FocusScene>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={0}>
         <View style={{ paddingTop: insets.top + 8, paddingHorizontal: 20, paddingBottom: 12, flexDirection: "row", alignItems: "center", gap: 12, borderBottomWidth: 1, borderBottomColor: colors.lineSoft }}>
           <KaiOrb size={38} state={typing ? "thinking" : coachMood(dashboard.data)} look={look} />
@@ -331,6 +331,6 @@ export default function TrainerTab() {
         ))}
         <Button label="Generate new insights" variant="ghost" onPress={async () => { await api.trainer.generateInsights().catch(() => {}); insights.refetch(); }} />
       </Sheet>
-    </View>
+    </FocusScene>
   );
 }

@@ -56,28 +56,6 @@ export function Screen({ children, scroll = true, tabs = false, contentStyle, on
   }, [onRefresh]);
   const endLock = useRef(false);
 
-  // The navigator is transparent (so the atmosphere shows through) and keeps every tab mounted, so
-  // a screen has to hide itself the moment it loses focus — otherwise two screens draw at once.
-  // It fades back in when focus returns; the outgoing screen is simply gone.
-  const navigation = useNavigation();
-  const [focused, setFocused] = useState(() => navigation.isFocused());
-  const focusO = useSharedValue(navigation.isFocused() ? 1 : 0);
-  useEffect(() => {
-    const on = navigation.addListener("focus", () => {
-      setFocused(true);
-      focusO.set(motion.reduced ? 1 : 0);
-      focusO.set(withTiming(1, { duration: motion.reduced ? 0 : 240, easing: EASE_LUXURY }));
-    });
-    const off = navigation.addListener("blur", () => {
-      setFocused(false);
-      focusO.set(0);
-    });
-    return () => {
-      on();
-      off();
-    };
-  }, [navigation, focusO]);
-  const focusStyle = useAnimatedStyle(() => ({ opacity: focusO.get() }));
   const hasGlobal = useHasGlobalAtmosphere();
   const nav = useNavChrome();
   const scrollY = useSharedValue(0);
@@ -95,7 +73,7 @@ export function Screen({ children, scroll = true, tabs = false, contentStyle, on
     paddingBottom: tabs ? contentBottomPad(insets.bottom, !!bar.data) : 24 + insets.bottom,
   };
   return (
-    <Animated.View pointerEvents={focused ? "auto" : "none"} style={[styles.root, focusStyle]}>
+    <FocusScene>
       {hasGlobal ? null : <Atmosphere />}
       {scroll ? (
         <ScrollView
@@ -131,6 +109,40 @@ export function Screen({ children, scroll = true, tabs = false, contentStyle, on
       ) : (
         <View style={[{ flex: 1 }, pad, contentStyle]}>{children}</View>
       )}
+    </FocusScene>
+  );
+}
+
+/**
+ * The tab navigator is transparent (so the atmosphere shows through) and keeps
+ * every tab mounted, so a screen has to hide itself the moment it loses focus —
+ * otherwise two screens draw at once. It fades back in when focus returns; the
+ * outgoing screen is simply gone. `Screen` uses this; a tab screen that builds
+ * its own layout (the Coach chat) must wrap its root in it too.
+ */
+export function FocusScene({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
+  const navigation = useNavigation();
+  const [focused, setFocused] = useState(() => navigation.isFocused());
+  const focusO = useSharedValue(navigation.isFocused() ? 1 : 0);
+  useEffect(() => {
+    const on = navigation.addListener("focus", () => {
+      setFocused(true);
+      focusO.set(motion.reduced ? 1 : 0);
+      focusO.set(withTiming(1, { duration: motion.reduced ? 0 : 240, easing: EASE_LUXURY }));
+    });
+    const off = navigation.addListener("blur", () => {
+      setFocused(false);
+      focusO.set(0);
+    });
+    return () => {
+      on();
+      off();
+    };
+  }, [navigation, focusO]);
+  const focusStyle = useAnimatedStyle(() => ({ opacity: focusO.get() }));
+  return (
+    <Animated.View pointerEvents={focused ? "auto" : "none"} style={[styles.root, style, focusStyle]}>
+      {children}
     </Animated.View>
   );
 }
