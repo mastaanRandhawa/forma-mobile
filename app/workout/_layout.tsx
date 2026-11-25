@@ -6,7 +6,7 @@ import { colors } from "@/theme/tokens";
 export default function WorkoutLayout() {
   return (
     <AtmosphereHost.Provider value={false}>
-      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background }, animation: "slide_from_right", animationDuration: 320 }} />
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background }, animation: "slide_from_right", animationDuration: 260 }} />
     </AtmosphereHost.Provider>
   );
 }

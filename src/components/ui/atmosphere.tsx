@@ -65,7 +65,7 @@ export function Atmosphere() {
   const [a1, a2, a3] = ambient.aurora;
 
   return (
-    <View style={StyleSheet.absoluteFill} pointerEvents="none">
+    <View style={[StyleSheet.absoluteFill, { overflow: "hidden" }]} pointerEvents="none">
       <View style={[StyleSheet.absoluteFill, { backgroundColor: (prev ?? current).bg }]} />
       {prev ? <Gradient css={prev.css} /> : null}
       <Animated.View style={[StyleSheet.absoluteFill, topStyle]}>

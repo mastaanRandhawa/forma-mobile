@@ -51,7 +51,7 @@ export default function Records() {
   const unlocked = (ach.data ?? []).filter((a) => a.unlockedAt).length;
 
   return (
-    <Screen refreshing={prs.loading && !prs.initialLoading} onRefresh={() => { prs.refetch(); ach.refetch(); }}>
+    <Screen onRefresh={() => Promise.all([prs.reload(), ach.reload()])}>
       <PageHeader title="Records" subtitle="Personal bests and achievements." />
       <PillTabs value={view} onChange={setView} options={[{ value: "lifts", label: `Lifts${lifts.length ? ` · ${lifts.length}` : ""}` }, { value: "achievements", label: `Achievements${ach.data ? ` · ${unlocked}/${ach.data.length}` : ""}` }]} />
 

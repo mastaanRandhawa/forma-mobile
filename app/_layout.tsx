@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { LogBox } from "react-native";
+import "@/lib/alert-web";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { DefaultTheme, ThemeProvider as NavThemeProvider } from "expo-router/react-navigation";
 import { StatusBar } from "expo-status-bar";
@@ -21,6 +22,7 @@ import { colors } from "@/theme/tokens";
 import { Atmosphere } from "@/components/ui/atmosphere";
 import { SettingsProvider, useAppearance, usePrefs } from "@/api/settings";
 import { ThemeProvider, useCustomization } from "@/theme/theme-provider";
+import { TourProvider } from "@/components/tour/tour";
 import { ToastHost } from "@/components/ui/toast";
 import { OfflineBanner } from "@/components/offline-banner";
 import { configureNotifications, onNotificationTap, syncWorkoutReminders } from "@/lib/reminders";
@@ -76,11 +78,11 @@ function AuthGate() {
   }, [status, user, segments, router]);
 
   return (
-    <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "transparent" }, animation: "fade", animationDuration: 280 }}>
+    <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "transparent" }, animation: "none" }}>
       <Stack.Screen name="(auth)" />
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="onboarding" options={{ gestureEnabled: false }} />
-      <Stack.Screen name="workout" options={{ presentation: "fullScreenModal" }} />
+      <Stack.Screen name="workout" options={{ presentation: "fullScreenModal", animation: "slide_from_bottom", animationDuration: 260 }} />
     </Stack>
   );
 }
@@ -127,11 +129,13 @@ function ThemedShell({ authKey }: { authKey: string }) {
     <ThemeProvider authKey={authKey} reduceMotion={appearance.reduceMotion}>
       <Atmosphere />
       <ThemedStatusBar />
-      <NavThemeProvider value={NAV_THEME}>
-        <ThemeSwap>
-          <AuthGate />
-        </ThemeSwap>
-      </NavThemeProvider>
+      <TourProvider>
+        <NavThemeProvider value={NAV_THEME}>
+          <ThemeSwap>
+            <AuthGate />
+          </ThemeSwap>
+        </NavThemeProvider>
+      </TourProvider>
       <OfflineBanner />
       <ToastHost />
     </ThemeProvider>

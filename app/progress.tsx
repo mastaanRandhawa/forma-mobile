@@ -92,7 +92,7 @@ function ProgressScreen() {
   const noData = !overview.data?.sessions;
 
   return (
-    <Screen>
+    <Screen onRefresh={() => Promise.all([overview.reload(), cons.reload(), prs.reload(), load.reload(), patterns.reload(), corr.reload(), meas.reload(), muscles.reload(), strength.reload()])}>
       <PageHeader title="Your trends" subtitle={overview.data?.summary} />
       {noData ? <EmptyState title="Nothing to chart yet" body="Finish a workout and your trends appear here." /> : null}
 

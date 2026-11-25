@@ -8,7 +8,10 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "app.forma.mobile"
+      "bundleIdentifier": "app.forma.mobile",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -33,7 +36,22 @@
           "backgroundColor": "#170D17"
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Forma uses the camera to scan food barcodes and, if you turn it on, to check your exercise form.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Forma uses your photos for progress pictures.",
+          "cameraPermission": "Forma uses the camera for progress pictures."
+        }
+      ],
+      "expo-notifications"
     ],
     "scheme": "forma",
     "backgroundColor": "#170D17"
