@@ -4,9 +4,9 @@ import { Alert, Animated, Easing, Modal, Pressable, ScrollView, View } from "rea
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
-import { useMuscleMap, useSessionHistory, useWallet } from "@/api/hooks";
-import { useAuth } from "@/auth/auth-provider";
-import { claimChallenge, computeChallenges, levelFor, type Challenge } from "@/lib/rewards";
+import { errorMessage, invalidateResource, useWallet } from "@/api/hooks";
+import { api } from "@/api/client";
+import { useRewards } from "@/lib/progression";
 import { toast } from "@/components/ui/toast";
 import { customizationItems, type CustomizationItem } from "@/theme/catalog";
 import { useCustomization, useTheme } from "@/theme/theme-provider";
@@ -17,15 +17,17 @@ import { Card, PageHeader, PageSkeleton } from "@/components/ui/extra";
 import { Label, Num, Text } from "@/components/ui/text";
 import { swatchColors } from "@/lib/swatch";
 
+// Coins pay for training and recovery — opening the app earns nothing.
 const EARN_WAYS = [
-  { id: "workout", label: "Finish a workout", detail: "Reward scales with volume and completion", coins: "+40–120" },
-  { id: "form", label: "Clean form session", detail: "Average form above 90%", coins: "+25" },
-  { id: "pr", label: "Set a personal record", detail: "Any lift beats its previous best", coins: "+50 each" },
-  { id: "daily", label: "Daily check-in", detail: "Open Forma and log how you feel", coins: "+15" },
-  { id: "streak", label: "Keep your streak", detail: "Bonuses at 3 / 7 / 14 / 30 / 60 / 100 days", coins: "+30–400" },
-  { id: "goal", label: "Hit a goal", detail: "Every daily or weekly goal you complete", coins: "+20–60" },
-  { id: "week", label: "Weekly training target", detail: "Reach your planned sessions for the week", coins: "+90" },
-  { id: "achievement", label: "Unlock an achievement", detail: "One-off payouts for milestones", coins: "+75–500" },
+  { id: "workout", label: "Finish a workout", detail: "40 + 5 per working set · first two each day", coins: "+40–120" },
+  { id: "pr", label: "Set a personal record", detail: "Any lift beats its previous best · up to 3 a session", coins: "+50 each" },
+  { id: "comeback", label: "Come back", detail: "First workout after a week or more off", coins: "+60" },
+  { id: "quest", label: "Weekly quests", detail: "Three on Home, reset every Monday", coins: "+120–180" },
+  { id: "streak", label: "Weekly streak", detail: "Hit your target at 2 / 4 / 8 / 12 / 26 / 52 weeks", coins: "+60–600" },
+  { id: "pledge", label: "Keep a pledge", detail: "Stake coins on your week — win it back plus 50%", coins: "+75–300" },
+  { id: "checkin", label: "Recovery check-in", detail: "Once a day — rest days count too", coins: "+15" },
+  { id: "goal", label: "Hit a goal", detail: "Every daily or weekly goal you complete", coins: "+30" },
+  { id: "achievement", label: "Unlock an achievement", detail: "One-off payouts for milestones", coins: "+50–200" },
 ];
 
 // Themes, accent colours and light/dark are free — the store sells the rest.
@@ -48,27 +50,37 @@ function StoreScreen() {
   const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("all");
   const [ownedOnly, setOwnedOnly] = useState(false);
   const balance = wallet.data?.balance ?? cz.balance;
-  const { user } = useAuth();
-  const hist = useSessionHistory();
-  const muscles = useMuscleMap("week");
-  const [challenges, setChallenges] = useState<Challenge[] | null>(null);
   const [celebrate, setCelebrate] = useState<CustomizationItem | null>(null);
-  // lifetime ≈ what you hold + what you've spent on owned cosmetics (the API has no lifetime total)
-  const lifetime = balance + customizationItems.filter((i) => i.price > 0 && cz.isOwned(i.id)).reduce((n, i) => n + i.price, 0);
-  const lvl = levelFor(lifetime);
-  const featured = useMemo(() => catalogue.filter((i) => (i.rarity === "legendary" || i.rarity === "epic") && !cz.isOwned(i.id)).slice(0, 3), [cz]);
+  const rewards = useRewards();
+  const rw = rewards.data;
+  const dealPrice = useMemo(() => new Map((rw?.deals ?? []).map((d) => [d.id, d.dealPrice])), [rw]);
+  const deals = useMemo(() => (rw?.deals ?? []).map((d) => ({ deal: d, item: catalogue.find((i) => i.id === d.id) })).filter((x): x is { deal: (typeof x)["deal"]; item: CustomizationItem } => !!x.item), [rw]);
+  const priceOf = (item: CustomizationItem) => dealPrice.get(item.id) ?? item.price;
 
-  useEffect(() => {
-    if (!hist.data) return;
-    void computeChallenges({ sessions: hist.data, musclesThisWeek: (muscles.data?.muscles ?? []).filter((m) => m.score > 0).length, weeklyTarget: user?.trainingFrequencyTarget ?? 4, metric: user?.unitPreference === "metric" }).then(setChallenges);
-  }, [hist.data, muscles.data, user]);
-
-  const claim = async (c: Challenge) => {
-    if (await claimChallenge(c)) {
-      wallet.refetch();
-      setChallenges((cur) => cur?.map((x) => (x.id === c.id ? { ...x, claimed: true } : x)) ?? null);
-    } else toast.error("Couldn't claim — check your connection.");
+  const buyShield = () => {
+    if (!rw) return;
+    const { price, held, max } = rw.shields;
+    if (held >= max) return Alert.alert("Shields full", `You can hold ${max} at most.`);
+    if (balance < price) return Alert.alert("Not enough coins", `A shield costs ${price}. You need ${price - balance} more.`);
+    Alert.alert("Buy a streak shield?", `${price} coins. If you miss a week after your free pass is used, a shield keeps your streak alive.`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: `Buy · ${price}`,
+        onPress: async () => {
+          try {
+            rewards.mutate(await api.rewards.buyShield(rewards.checkinsEnabled));
+            invalidateResource("wallet");
+            wallet.refetch();
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+            toast.success("Shield ready");
+          } catch (e) {
+            toast.error(errorMessage(e as Error));
+          }
+        },
+      },
+    ]);
   };
+  const featured = useMemo(() => catalogue.filter((i) => (i.rarity === "legendary" || i.rarity === "epic") && !cz.isOwned(i.id)).slice(0, 3), [cz]);
 
   const shown = useMemo(() => {
     const group = TABS.find((t) => t.id === tab)?.group;
@@ -76,15 +88,17 @@ function StoreScreen() {
   }, [tab, ownedOnly, cz]);
 
   function buy(item: CustomizationItem) {
-    if (balance < item.price) return Alert.alert("Not enough coins", `${item.name} costs ${item.price}. You need ${item.price - balance} more — finish a workout or hit a goal to earn them.`);
-    Alert.alert(`Unlock ${item.name}?`, `${item.price} coins · you'll have ${balance - item.price} left.`, [
+    const price = priceOf(item);
+    if (balance < price) return Alert.alert("Not enough coins", `${item.name} costs ${price}. You need ${price - balance} more — finish a workout or a weekly quest to earn them.`);
+    Alert.alert(`Unlock ${item.name}?`, `${price} coins${price < item.price ? ` (deal, was ${item.price})` : ""} · you'll have ${balance - price} left.`, [
       { text: "Cancel", style: "cancel" },
       {
-        text: `Unlock · ${item.price}`,
+        text: `Unlock · ${price}`,
         onPress: async () => {
-          const ok = await cz.buy(item, false);
+          const ok = await cz.buy(item, false, price);
           if (ok) {
             wallet.refetch();
+            rewards.refetch();
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
             setCelebrate(item);
           } else toast.error("Couldn't complete the purchase. Try again.");
@@ -96,42 +110,64 @@ function StoreScreen() {
   if (wallet.initialLoading) return <Screen><PageHeader title="Store" /><PageSkeleton /></Screen>;
 
   return (
-    <Screen onRefresh={() => Promise.all([wallet.reload(), hist.reload()])}>
-      <PageHeader title="The store" right={<View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}><Ionicons name="logo-bitcoin" size={16} color={colors.amber} /><Num size={18}>{balance.toLocaleString()}</Num></View>} />
+    <Screen onRefresh={() => Promise.all([wallet.reload(), rewards.reload()])}>
+      <PageHeader title="The store" />
       <Card>
-        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" }}>
           <View>
-            <Label>LEVEL {lvl.level} · {lvl.title.toUpperCase()}</Label>
-            <Num size={28} style={{ marginTop: 6 }}>{lifetime.toLocaleString()}</Num>
-            <Text variant="meta" color="tertiary">coins earned all-time</Text>
+            <Label>BALANCE</Label>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 }}>
+              <Ionicons name="logo-bitcoin" size={22} color={colors.amber} />
+              <Num size={28}>{balance.toLocaleString()}</Num>
+            </View>
           </View>
           <View style={{ alignItems: "flex-end" }}>
             <Num size={18} style={{ color: colors.amber }}>+{wallet.data?.earnedThisWeek ?? 0}</Num>
             <Text variant="meta" color="tertiary">this week</Text>
           </View>
         </View>
-        <View style={{ marginTop: 12, gap: 6 }}>
-          <ProgressBar pct={lvl.pct * 100} tone="amber" height={6} />
-          <Text variant="meta" color="tertiary">{lvl.next ? `${lvl.toNext.toLocaleString()} to ${lvl.next.title}` : "Max level reached"}</Text>
-        </View>
+        <Text variant="meta" color="tertiary" style={{ marginTop: 10 }}>Weekly quests live on Home. Your rank comes from training, not coins.</Text>
       </Card>
 
-      <SectionHeading title="Weekly challenges" />
-      {challenges === null ? <Text color="tertiary">Loading challenges…</Text> : challenges.map((c) => (
-        <Card key={c.id} style={{ marginBottom: 10, padding: 16 }}>
-          <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 10 }}>
-            <View style={{ flex: 1 }}><Text>{c.title}</Text><Text variant="meta" color="tertiary">{c.detail}</Text></View>
-            <Num size={15} style={{ color: colors.amber }}>+{c.reward}</Num>
-          </View>
-          <View style={{ marginTop: 10, gap: 6 }}>
-            <ProgressBar pct={(c.current / c.target) * 100} tone={c.tone} height={6} />
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-              <Text variant="meta" color="tertiary">{c.current.toLocaleString()} / {c.target.toLocaleString()} {c.unit}</Text>
-              {c.claimed ? <Text variant="meta" style={{ color: colors.lime }}>Claimed ✓</Text> : c.done ? <Chip label="Claim" active onPress={() => claim(c)} /> : <Text variant="meta" color="tertiary">Resets Monday</Text>}
+      {deals.length ? (
+        <>
+          <SectionHeading title="This week's deals" />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
+            {deals.map(({ deal, item }) => (
+              <Pressable key={item.id} onPress={() => (deal.owned ? undefined : buy(item))} disabled={deal.owned} style={{ width: 170, borderRadius: radius.medium, overflow: "hidden", borderWidth: 1, borderColor: RARITY_COLOR[item.rarity], backgroundColor: colors.surface, opacity: deal.owned ? 0.6 : 1 }}>
+                <LinearGradient colors={swatchColors(item.swatch)} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ height: 64 }} />
+                <View style={{ padding: 12, gap: 4 }}>
+                  <Text numberOfLines={1}>{item.name}</Text>
+                  {deal.owned ? <Text variant="meta" style={{ color: colors.lime }}>Owned</Text> : (
+                    <View style={{ flexDirection: "row", alignItems: "baseline", gap: 6 }}>
+                      <Num size={16} style={{ color: colors.amber }}>{deal.dealPrice}</Num>
+                      <Text variant="meta" color="tertiary" style={{ textDecorationLine: "line-through" }}>{deal.price}</Text>
+                    </View>
+                  )}
+                </View>
+              </Pressable>
+            ))}
+          </ScrollView>
+          <Text variant="meta" color="tertiary" style={{ marginTop: 8 }}>25% off · new picks every Monday</Text>
+        </>
+      ) : null}
+
+      {rw ? (
+        <>
+          <SectionHeading title="Streak shields" />
+          <Card style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+            <Ionicons name="shield-checkmark" size={22} color={colors.cyan} />
+            <View style={{ flex: 1 }}>
+              <Text>{rw.shields.held} of {rw.shields.max} held</Text>
+              <Text variant="meta" color="tertiary">Covers a missed week once your free pass is used. Spent automatically.</Text>
             </View>
-          </View>
-        </Card>
-      ))}
+            <Pressable onPress={buyShield} disabled={rw.shields.held >= rw.shields.max} style={{ height: 36, paddingHorizontal: 14, borderRadius: radius.pill, backgroundColor: colors.btnWhite, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6, opacity: rw.shields.held >= rw.shields.max || balance < rw.shields.price ? 0.5 : 1 }}>
+              <Ionicons name="logo-bitcoin" size={13} color={colors.btnWhiteInk} />
+              <Text style={{ color: colors.btnWhiteInk, fontSize: 13 }}>{rw.shields.price}</Text>
+            </Pressable>
+          </Card>
+        </>
+      ) : null}
 
       {featured.length ? (
         <>
@@ -178,7 +214,7 @@ function StoreScreen() {
                 <Text style={{ fontSize: 15 }} numberOfLines={1}>{item.name}</Text>
                 <Text variant="meta" color="tertiary" numberOfLines={2} style={{ minHeight: 30 }}>{item.detail}</Text>
                 <Label>{item.rarity.toUpperCase()}</Label>
-                {equipped ? <Chip label="Equipped" active /> : owned ? <Chip label="Equip" onPress={async () => { await cz.equip(item); toast.success(`${item.name} equipped`); }} /> : <Pressable onPress={() => buy(item)} style={{ height: 36, borderRadius: radius.pill, backgroundColor: colors.btnWhite, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6, opacity: balance >= item.price ? 1 : 0.5 }}><Ionicons name="logo-bitcoin" size={13} color={colors.btnWhiteInk} /><Text style={{ color: colors.btnWhiteInk, fontSize: 13 }}>{item.price}</Text></Pressable>}
+                {equipped ? <Chip label="Equipped" active /> : owned ? <Chip label="Equip" onPress={async () => { await cz.equip(item); toast.success(`${item.name} equipped`); }} /> : <Pressable onPress={() => buy(item)} style={{ height: 36, borderRadius: radius.pill, backgroundColor: colors.btnWhite, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 6, opacity: balance >= priceOf(item) ? 1 : 0.5 }}><Ionicons name="logo-bitcoin" size={13} color={colors.btnWhiteInk} /><Text style={{ color: colors.btnWhiteInk, fontSize: 13 }}>{priceOf(item)}</Text></Pressable>}
               </View>
             </View>
           );

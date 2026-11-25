@@ -3,7 +3,6 @@ import { TextInput, View } from "react-native";
 import { api } from "@/api/client";
 import { errorMessage, invalidateResource } from "@/api/hooks";
 import type { GoalWithProgress } from "@/api/types";
-import { grantGoalReward } from "@/lib/rewards";
 import { colors, fonts } from "@/theme/tokens";
 import { Button } from "./ui/controls";
 import { Sheet } from "./ui/extra";
@@ -21,8 +20,9 @@ export function GoalLogSheet({ goal, onClose, onLogged }: { goal: GoalWithProgre
     try {
       const g = await api.goals.log(goal.id, n, mode);
       if (g.completed && !goal.completed) {
-        void grantGoalReward(goal.id, g.periodKey, goal.label);
-        toast.success(`${goal.label} complete`);
+        if (g.coins) toast.coins(g.coins, `${goal.label} complete`);
+        else toast.success(`${goal.label} complete`);
+        invalidateResource("rewards");
       } else toast.success(`${goal.label} · ${g.current} / ${g.target} ${goal.unit}`);
       invalidateResource("goals");
       invalidateResource("dashboard");

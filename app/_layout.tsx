@@ -27,7 +27,6 @@ import { ToastHost } from "@/components/ui/toast";
 import { OfflineBanner } from "@/components/offline-banner";
 import { configureNotifications, onNotificationTap, syncWorkoutReminders } from "@/lib/reminders";
 import { loadDevicePrefs } from "@/lib/device-prefs";
-import { grantDailyBonus } from "@/lib/rewards";
 import { motion } from "@/lib/motion";
 import { EASE_LUXURY } from "@/lib/ease";
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withTiming } from "react-native-reanimated";
@@ -50,15 +49,10 @@ function AuthGate() {
   const prefs = usePrefs();
   const ready = status === "authed" && !!user?.onboardingCompletedAt;
 
-  // daily check-in coins (idempotent per day) + notification taps → route
+  // notification taps → route
   useEffect(() => {
     if (!ready) return;
-    const t = setTimeout(() => void grantDailyBonus(), 1200);
-    const off = onNotificationTap((url) => router.push(url as never));
-    return () => {
-      clearTimeout(t);
-      off();
-    };
+    return onNotificationTap((url) => router.push(url as never));
   }, [ready, router]);
 
   // keep scheduled workout reminders in line with the preference

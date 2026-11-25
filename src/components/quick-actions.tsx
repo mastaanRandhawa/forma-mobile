@@ -13,7 +13,6 @@ import { useRouter } from "expo-router";
 import { api } from "@/api/client";
 import { errorMessage, invalidateResource, useGoals } from "@/api/hooks";
 import { useAuth } from "@/auth/auth-provider";
-import { grantGoalReward } from "@/lib/rewards";
 import { toKg } from "@/lib/workouts";
 import { colors, fonts, radius, space } from "@/theme/tokens";
 import { CheckinSheet, useTodayCheckin } from "./checkin";
@@ -81,8 +80,8 @@ export function QuickLogProvider({ children }: { children: ReactNode }) {
         }
         if (goal) {
           const updated = await api.goals.log(goal.id, n, "increment");
-          if (updated.completed && !goal.completed) void grantGoalReward(goal.id, updated.periodKey, goal.label);
-          toast.success(`+${n} ${goal.unit} water · ${updated.current}/${updated.target}`);
+          if (updated.coins) toast.coins(updated.coins, `${goal.label} complete`);
+          else toast.success(`+${n} ${goal.unit} water · ${updated.current}/${updated.target}`);
         }
         invalidateResource("goals");
         goals.refetch();

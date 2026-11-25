@@ -40,7 +40,8 @@ interface Ctx {
   version: number;
   isOwned: (id: string) => boolean;
   isEquipped: (id: string, slot: CustomizationSlot) => boolean;
-  buy: (item: CustomizationItem, autoEquip?: boolean) => Promise<boolean>;
+  /** `price` overrides the list price for the local balance check (weekly deals); the server charges the real price */
+  buy: (item: CustomizationItem, autoEquip?: boolean, price?: number) => Promise<boolean>;
   equip: (item: CustomizationItem) => Promise<void>;
   setSlot: (slot: CustomizationSlot, id: string) => Promise<void>;
   refresh: () => Promise<void>;
@@ -153,8 +154,8 @@ export function ThemeProvider({ children, authKey, reduceMotion }: { children: R
   );
 
   const buy = useCallback(
-    async (item: CustomizationItem, autoEquip = false) => {
-      if (owned.includes(item.id) || balance < item.price) return false;
+    async (item: CustomizationItem, autoEquip = false, price = item.price) => {
+      if (owned.includes(item.id) || balance < price) return false;
       try {
         let s = await api.customization.buy(item.id);
         if (autoEquip) s = await api.customization.equip(item.id);

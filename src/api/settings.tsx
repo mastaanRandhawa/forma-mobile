@@ -324,6 +324,11 @@ export function useProgression(): ProgressionState & { has: (f: FeatureKey) => b
   const { progression } = useSettingsCtx().bundle;
   return {
     ...progression,
-    has: (f: FeatureKey) => !progression.gatingEnabled || progression.unlockedFeatures.includes(f),
+    has: (f: FeatureKey) => {
+      if (!progression.gatingEnabled) return true;
+      const unlocked = progression.unlockedFeatures;
+      // the store opens with your first workout (same moment as progress), not after achievements
+      return unlocked.includes(f) || (f === "store" && unlocked.includes("progress_basic"));
+    },
   };
 }

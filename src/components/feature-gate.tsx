@@ -18,7 +18,7 @@ const REQUIREMENT: Partial<Record<FeatureKey, string>> = {
   programs: "Finish 3 workouts to build multi-week programs.",
   progress_advanced: "Finish 5 workouts to see strength curves and records.",
   achievements: "Earn your first PR or badge to open achievements.",
-  store: "Unlock achievements first — then the store opens.",
+  store: "Finish your first workout to open the store.",
   insights: "Finish 4 workouts and Kai starts sending proactive insights.",
   voice_chat: "Send 10 messages to Kai to turn on voice mode.",
 };
