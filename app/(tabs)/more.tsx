@@ -22,6 +22,7 @@ const ITEMS: Item[] = [
   { to: "/records", label: "Records", hint: "PRs and achievements", icon: "trophy-outline" },
   { to: "/goals", label: "Goals", hint: "Daily & weekly targets", icon: "flag-outline", feature: "goals" },
   { to: "/exercises", label: "Exercise library", hint: "Search every movement", icon: "library-outline" },
+  { to: "/games", label: "Games", hint: "Quick games for rest periods", icon: "game-controller-outline" },
   { to: "/store", label: "Store", hint: "Spend coins on cosmetics", icon: "bag-handle-outline", feature: "store" },
   { to: "/notifications", label: "Notifications", hint: "Reminders & milestones", icon: "notifications-outline" },
 ];

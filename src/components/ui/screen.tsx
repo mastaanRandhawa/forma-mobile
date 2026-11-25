@@ -1,5 +1,5 @@
 import { useTheme } from "@/theme/theme-provider";
-import { Children, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Children, cloneElement, isValidElement, useCallback, useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { RefreshControl, ScrollView, StyleSheet, View, type StyleProp, type ViewStyle } from "react-native";
 import { Atmosphere, useHasGlobalAtmosphere } from "./atmosphere";
 import { Reveal } from "./reveal";
@@ -15,11 +15,42 @@ import { TourScrollCtx } from "@/components/tour/tour";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { colors, space } from "@/theme/tokens";
 import { contentBottomPad } from "@/components/dock-metrics";
+import { PageHeader } from "./extra";
+import { Text } from "./text";
 import { api } from "@/api/client";
 import { useResource } from "@/api/hooks";
 import type { WorkoutSession } from "@/api/types";
 
 export { Atmosphere } from "./atmosphere";
+
+/**
+ * Wrap a screen's search bar, filter tabs or title row in <Pinned> (as a
+ * leading child of <Screen>, right after any PageHeader) to keep it fixed at
+ * the top while the rest scrolls. A leading <PageHeader> is pinned
+ * automatically, so Back is always one tap away.
+ */
+export function Pinned({ children }: { children?: ReactNode }) {
+  return <>{children}</>;
+}
+
+type HeaderProps = Parameters<typeof PageHeader>[0];
+
+/** Split leading PageHeader/Pinned children off; a pinned header's subtitle moves into the scroll body to keep the bar short. */
+function splitPinned(children: ReactNode): { pinned: ReactNode[]; body: ReactNode[] } {
+  const all = Children.toArray(children);
+  let n = 0;
+  while (n < all.length && isValidElement(all[n]) && ((all[n] as ReactElement).type === PageHeader || (all[n] as ReactElement).type === Pinned)) n++;
+  const pinned: ReactNode[] = [];
+  const intro: ReactNode[] = [];
+  for (const c of all.slice(0, n)) {
+    const el = c as ReactElement<HeaderProps>;
+    if (el.type === PageHeader) {
+      pinned.push(cloneElement(el, { subtitle: undefined, pinned: true }));
+      if (el.props.subtitle) intro.push(<Text key={`${el.key}-sub`} color="secondary" style={{ marginBottom: 16 }}>{el.props.subtitle}</Text>);
+    } else pinned.push(c);
+  }
+  return { pinned, body: [...intro, ...all.slice(n)] };
+}
 
 type ScreenProps = {
   children: ReactNode;
@@ -66,8 +97,18 @@ export function Screen({ children, scroll = true, tabs = false, contentStyle, on
   const bar = useResource<WorkoutSession | null>(tabs ? "active-session" : "active-session:off", () =>
     tabs ? api.sessions.list({ status: "in_progress", take: 1 }).then((l) => l[0] ?? null) : Promise.resolve(null),
   );
+  const { pinned, body } = splitPinned(children);
+  const hasPinned = pinned.length > 0;
+  // hairline under the pinned bar once content slides beneath it
+  const edge = useAnimatedStyle(() => ({ opacity: Math.min(1, scrollY.get() / 12) }));
+  const pinnedBar = hasPinned ? (
+    <View style={{ paddingTop: insets.top + 8, paddingHorizontal: space.page, paddingBottom: 10, gap: 10 }}>
+      {pinned}
+      <Animated.View pointerEvents="none" style={[{ position: "absolute", left: 0, right: 0, bottom: 0, height: StyleSheet.hairlineWidth, backgroundColor: colors.lineHighlight }, edge]} />
+    </View>
+  ) : null;
   const pad: ViewStyle = {
-    paddingTop: insets.top + 12,
+    paddingTop: hasPinned ? 10 : insets.top + 12,
     paddingHorizontal: space.page,
     // leave room for the floating tab bar, plus the workout pill when one is running
     paddingBottom: tabs ? contentBottomPad(insets.bottom, !!bar.data) : 24 + insets.bottom,
@@ -75,6 +116,7 @@ export function Screen({ children, scroll = true, tabs = false, contentStyle, on
   return (
     <FocusScene>
       {hasGlobal ? null : <Atmosphere />}
+      {pinnedBar}
       {scroll ? (
         <ScrollView
           ref={scrollRef}
@@ -102,12 +144,12 @@ export function Screen({ children, scroll = true, tabs = false, contentStyle, on
         >
           <TourScrollCtx.Provider value={scrollBy}>
           <ScrollYCtx.Provider value={scrollY}>
-            {reveal ? Children.toArray(children).map((c, i) => <Reveal key={(c as { key?: string }).key ?? i} index={i}>{c}</Reveal>) : children}
+            {reveal ? body.map((c, i) => <Reveal key={(c as { key?: string }).key ?? i} index={i}>{c}</Reveal>) : body}
           </ScrollYCtx.Provider>
           </TourScrollCtx.Provider>
         </ScrollView>
       ) : (
-        <View style={[{ flex: 1 }, pad, contentStyle]}>{children}</View>
+        <View style={[{ flex: 1 }, pad, contentStyle]}>{body}</View>
       )}
     </FocusScene>
   );

@@ -5,13 +5,13 @@
  * peak illustrations side by side, chips, muscles, instructions, form tips).
  */
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
-import { FlatList, Linking, ScrollView, TextInput, View } from "react-native";
+import { Pressable, FlatList, Linking, ScrollView, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ExerciseThumb } from "@/components/exercise";
 import { REPDB_URL, getRepdbCatalog, repdbImage, type RepDbCatalogEntry } from "@/lib/repdb";
 import { useTheme } from "@/theme/theme-provider";
 import { colors, fonts, radius } from "@/theme/tokens";
-import { Screen } from "@/components/ui/screen";
+import { Pinned, Screen } from "@/components/ui/screen";
 import { ListFooter } from "@/components/ui/loading";
 import { Chip } from "@/components/ui/controls";
 import { PageHeader, Sheet } from "@/components/ui/extra";
@@ -46,28 +46,25 @@ export default function ExerciseLibrary() {
   useEffect(() => setLimit(LIMIT), [needleRaw, muscle, equipment]);
   const shown = filtered.slice(0, limit);
 
-  const header = (
-    <View>
-      <PageHeader title="Exercises" subtitle={`${catalog.length} movements`} />
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, height: 48, borderRadius: radius.small, borderWidth: 1, borderColor: colors.lineSoft, backgroundColor: colors.surface, paddingHorizontal: 14, marginBottom: 12 }}>
-        <Ionicons name="search" size={17} color={colors.textTertiary} />
-        <TextInput value={q} onChangeText={setQ} placeholder="Search by name, muscle or equipment" placeholderTextColor={colors.textTertiary} autoCapitalize="none" autoCorrect={false} style={{ flex: 1, color: colors.textPrimary, fontFamily: fonts.regular, fontSize: 16 }} />
-      </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingBottom: 8 }}>
-        {MUSCLES.map((m) => <Chip key={m} label={m} active={muscle === m} onPress={() => setMuscle(m)} />)}
-      </ScrollView>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingBottom: 14 }}>
-        {EQUIPMENT.map((m) => <Chip key={m} label={m} active={equipment === m} onPress={() => setEquipment(m)} />)}
-      </ScrollView>
-    </View>
-  );
-
   return (
-    <Screen scroll={false} contentStyle={{ paddingHorizontal: 0 }}>
+    <Screen scroll={false} contentStyle={{ paddingHorizontal: 0, paddingTop: 0 }}>
+      <PageHeader title="Exercises" />
+      <Pinned>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, height: 48, borderRadius: radius.small, borderWidth: 1, borderColor: colors.lineSoft, backgroundColor: colors.surface, paddingHorizontal: 14 }}>
+          <Ionicons name="search" size={17} color={colors.textTertiary} />
+          <TextInput value={q} onChangeText={setQ} placeholder={`Search ${catalog.length} movements`} placeholderTextColor={colors.textTertiary} autoCapitalize="none" autoCorrect={false} style={{ flex: 1, color: colors.textPrimary, fontFamily: fonts.regular, fontSize: 16 }} />
+          {q ? <Pressable onPress={() => setQ("")} hitSlop={10} accessibilityLabel="Clear search"><Ionicons name="close-circle" size={18} color={colors.textTertiary} /></Pressable> : null}
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -20 }} contentContainerStyle={{ gap: 8, paddingHorizontal: 20 }} keyboardShouldPersistTaps="handled">
+          {MUSCLES.map((m) => <Chip key={m} label={m} active={muscle === m} onPress={() => setMuscle(m)} />)}
+        </ScrollView>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -20 }} contentContainerStyle={{ gap: 8, paddingHorizontal: 20 }} keyboardShouldPersistTaps="handled">
+          {EQUIPMENT.map((m) => <Chip key={m} label={m} active={equipment === m} onPress={() => setEquipment(m)} />)}
+        </ScrollView>
+      </Pinned>
       <FlatList
         data={shown}
         keyExtractor={(e) => e.id}
-        ListHeaderComponent={<View style={{ paddingHorizontal: 20 }}>{header}</View>}
         contentContainerStyle={{ paddingBottom: 40 }}
         keyboardShouldPersistTaps="handled"
         onEndReached={() => setLimit((l) => (l < filtered.length ? l + LIMIT : l))}

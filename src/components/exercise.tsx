@@ -108,15 +108,23 @@ export function ExercisePicker({ visible, onClose, onPick, title = "Add exercise
     }
   }, [visible]);
   return (
-    <Sheet visible={visible} onClose={onClose} title={title}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, height: 48, borderRadius: radius.small, borderWidth: 1, borderColor: colors.lineSoft, backgroundColor: colors.surface, paddingHorizontal: 14 }}>
-        <Ionicons name="search" size={17} color={colors.textTertiary} />
-        <TextInput value={q} onChangeText={setQ} placeholder="Search exercises" placeholderTextColor={colors.textTertiary} autoCapitalize="none" autoCorrect={false} returnKeyType="search" style={{ flex: 1, color: colors.textPrimary, fontFamily: fonts.regular, fontSize: 16 }} />
-        {q ? <Pressable onPress={() => setQ("")} hitSlop={10}><Ionicons name="close-circle" size={18} color={colors.textTertiary} /></Pressable> : null}
-      </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }} keyboardShouldPersistTaps="handled">
-        {MUSCLES.map((m) => <Chip key={m} label={m} active={muscle === m} onPress={() => setMuscle(m)} />)}
-      </ScrollView>
+    <Sheet
+      visible={visible}
+      onClose={onClose}
+      title={title}
+      header={
+        <>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, height: 48, borderRadius: radius.small, borderWidth: 1, borderColor: colors.lineSoft, backgroundColor: colors.surface, paddingHorizontal: 14 }}>
+            <Ionicons name="search" size={17} color={colors.textTertiary} />
+            <TextInput value={q} onChangeText={setQ} placeholder="Search exercises" placeholderTextColor={colors.textTertiary} autoCapitalize="none" autoCorrect={false} returnKeyType="search" style={{ flex: 1, color: colors.textPrimary, fontFamily: fonts.regular, fontSize: 16 }} />
+            {q ? <Pressable onPress={() => setQ("")} hitSlop={10} accessibilityLabel="Clear search"><Ionicons name="close-circle" size={18} color={colors.textTertiary} /></Pressable> : null}
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }} keyboardShouldPersistTaps="handled">
+            {MUSCLES.map((m) => <Chip key={m} label={m} active={muscle === m} onPress={() => setMuscle(m)} />)}
+          </ScrollView>
+        </>
+      }
+    >
       {items === null && !error ? <View style={{ paddingVertical: 8 }}><SkelRows count={5} thumb={42} /></View> : null}
       {error ? <Text color="secondary">Couldn't search the library. Check your connection.</Text> : null}
       {items?.length === 0 ? <Text color="tertiary" style={{ textAlign: "center", paddingVertical: 16 }}>No exercises match.</Text> : null}

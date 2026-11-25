@@ -22,7 +22,7 @@ import { HIT, colors, fonts, iconSize, radius } from "@/theme/tokens";
 import { useCheckinGate } from "@/components/checkin";
 import { useDevicePrefs } from "@/lib/device-prefs";
 import { useActiveSession } from "@/components/workout-bar";
-import { Screen } from "@/components/ui/screen";
+import { Pinned, Screen } from "@/components/ui/screen";
 import { Button, Chip, SectionHeading } from "@/components/ui/controls";
 import { FadeSwap, ListFooter, SkelRows, useGrowingList, useIncremental } from "@/components/ui/loading";
 import { TourTarget } from "@/components/tour/tour";
@@ -195,7 +195,8 @@ export default function Workouts() {
 
   return (
     <Screen tabs onRefresh={refreshAll} onEndReached={tab === "history" ? pagedHist.loadMore : tab === "templates" ? () => { myPaged.loadMore(); presetPaged.loadMore(); } : undefined}>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+      <Pinned>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
         <Text variant="title">Train</Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
           <TourTarget id="train-insights"><PopoverMenu
@@ -220,6 +221,7 @@ export default function Workouts() {
       </View>
 
       <TourTarget id="train-tabs"><Segmented value={tab} onChange={setTab} options={TABS.map((t) => ({ value: t.value, label: t.label }))} /></TourTarget>
+      </Pinned>
 
       {tab === "today" && (
         <View style={{ marginTop: 20, gap: 20 }}>

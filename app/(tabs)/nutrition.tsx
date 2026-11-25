@@ -21,7 +21,7 @@ import { MEALS, MEAL_LABEL, addDaysISO, fmtDay, mealForNow, round, todayISO } fr
 import { useTheme } from "@/theme/theme-provider";
 import { colors, fonts, radius } from "@/theme/tokens";
 import { AddFoodSheet } from "@/components/nutrition/add-food";
-import { Screen } from "@/components/ui/screen";
+import { Pinned, Screen } from "@/components/ui/screen";
 import { Button, Chip, ProgressBar } from "@/components/ui/controls";
 import { Card, Dial, EmptyState, ErrorState, PillTabs, Segmented, Sheet, Skel } from "@/components/ui/extra";
 import { SoftSurface } from "@/components/ui/surface";
@@ -107,7 +107,8 @@ export default function Nutrition() {
 
   return (
     <Screen tabs onRefresh={day.reload}>
-      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+      <Pinned>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
         <Text variant="title">Nutrition</Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
           {tab === "today" ? <TourTarget id="nutrition-add"><Chip label="+ Add food" active onPress={() => setAdd({ open: true, meal: mealForNow() })} /></TourTarget> : null}
@@ -115,6 +116,7 @@ export default function Nutrition() {
         </View>
       </View>
       <TourTarget id="nutrition-tabs"><Segmented value={tab} onChange={setTab} options={[{ value: "today", label: "Food log" }, { value: "trends", label: "Trends" }]} /></TourTarget>
+      </Pinned>
 
       {tab === "today" ? (
         <View style={{ marginTop: 14, gap: 14 }}>
