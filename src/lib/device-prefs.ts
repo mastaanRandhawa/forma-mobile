@@ -15,6 +15,10 @@ export interface DevicePrefs {
   pushAskedAt: number | null;
   /** tab bar: shrink while scrolling down ("auto"), or stay full / compact */
   navMode?: "auto" | "expanded" | "minimized";
+  /** active workout: show the elapsed-time clock (hidden by default) */
+  workoutClock?: boolean;
+  /** active workout: always show the rest countdown digits (otherwise only the bar, plus the last 10 s) */
+  restCountdown?: boolean;
 }
 
 const KEY = "forma.device-prefs.v1";

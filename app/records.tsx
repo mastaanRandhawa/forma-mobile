@@ -15,7 +15,7 @@ import { fromKg, unitLabel, type Units } from "@/lib/workouts";
 import { useTheme } from "@/theme/theme-provider";
 import { colors, fonts, radius } from "@/theme/tokens";
 import { ExerciseDetailSheet } from "@/components/exercise";
-import { Screen } from "@/components/ui/screen";
+import { Pinned, Screen } from "@/components/ui/screen";
 import { ProgressBar } from "@/components/ui/controls";
 import { EmptyState, ErrorState, PageHeader, PillTabs, Skel, Sparkline } from "@/components/ui/extra";
 import { SoftSurface } from "@/components/ui/surface";
@@ -53,20 +53,23 @@ export default function Records() {
   return (
     <Screen onRefresh={() => Promise.all([prs.reload(), ach.reload()])}>
       <PageHeader title="Records" subtitle="Personal bests and achievements." />
-      <PillTabs value={view} onChange={setView} options={[{ value: "lifts", label: `Lifts${lifts.length ? ` · ${lifts.length}` : ""}` }, { value: "achievements", label: `Achievements${ach.data ? ` · ${unlocked}/${ach.data.length}` : ""}` }]} />
+      <Pinned>
+        <PillTabs value={view} onChange={setView} options={[{ value: "lifts", label: `Lifts${lifts.length ? ` · ${lifts.length}` : ""}` }, { value: "achievements", label: `Achievements${ach.data ? ` · ${unlocked}/${ach.data.length}` : ""}` }]} />
+        {view === "lifts" && lifts.length > 4 ? (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, height: 48, borderRadius: radius.small, backgroundColor: colors.surface, paddingHorizontal: 14 }}>
+            <Ionicons name="search" size={16} color={colors.textTertiary} />
+            <TextInput value={q} onChangeText={setQ} placeholder="Find a lift" placeholderTextColor={colors.textTertiary} style={{ flex: 1, color: colors.textPrimary, fontFamily: fonts.regular, fontSize: 16 }} />
+            {q ? <Pressable onPress={() => setQ("")} hitSlop={10} accessibilityLabel="Clear search"><Ionicons name="close-circle" size={18} color={colors.textTertiary} /></Pressable> : null}
+          </View>
+        ) : null}
+      </Pinned>
 
       {view === "lifts" ? (
-        <View style={{ marginTop: 14, gap: 10 }}>
+        <View style={{ gap: 10 }}>
           {prs.initialLoading ? [0, 1, 2].map((i) => <Skel key={i} h={110} r={32} />) : prs.error && !prs.data ? <ErrorState message={errorMessage(prs.error)} onRetry={prs.refetch} /> : lifts.length === 0 ? (
             <EmptyState title="No records yet" body="Finish your first workout and log some sets — your all-time bests appear here." />
           ) : (
             <>
-              {lifts.length > 4 ? (
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 8, height: 44, borderRadius: radius.small, backgroundColor: colors.surface, paddingHorizontal: 14 }}>
-                  <Ionicons name="search" size={16} color={colors.textTertiary} />
-                  <TextInput value={q} onChangeText={setQ} placeholder="Find a lift" placeholderTextColor={colors.textTertiary} style={{ flex: 1, color: colors.textPrimary, fontFamily: fonts.regular, fontSize: 15 }} />
-                </View>
-              ) : null}
               {shown.map((l, i) => <LiftCard key={l.slug} lift={l} units={units} top={i === 0 && !q} onPress={() => setOpen(l.slug)} />)}
               {!shown.length ? <Text color="tertiary" style={{ textAlign: "center" }}>No lifts match "{q}".</Text> : null}
             </>

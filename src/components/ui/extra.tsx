@@ -29,13 +29,27 @@ import { Button } from "./controls";
 import { ScrubTabs } from "./scrub-tabs";
 
 /** Page header with back chevron, used by every pushed screen. */
-export function PageHeader({ title, subtitle, back = true, right }: { title: string; subtitle?: string; back?: boolean; right?: ReactNode }) {
+export function PageHeader({ title, subtitle, back = true, right, pinned }: { title: string; subtitle?: string; back?: boolean; right?: ReactNode; /** set by <Screen> when it pins the header: one compact row */ pinned?: boolean }) {
   const router = useRouter();
+  const goBack = () => (router.canGoBack() ? router.back() : router.replace("/dashboard"));
+  if (pinned) {
+    return (
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 10, minHeight: 44 }}>
+        {back ? (
+          <PressScale onPress={goBack} haptic="light" to={0.92} accessibilityLabel="Back" style={{ width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface }}>
+            <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
+          </PressScale>
+        ) : null}
+        <Text variant="heading" numberOfLines={1} style={{ flex: 1, fontSize: 22 }}>{title}</Text>
+        {right}
+      </View>
+    );
+  }
   return (
     <View style={{ marginBottom: 20, gap: 6 }}>
       <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 36 }}>
         {back ? (
-          <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace("/dashboard"))} hitSlop={12} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+          <Pressable onPress={goBack} hitSlop={12} style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
             <Ionicons name="chevron-back" size={20} color={colors.textSecondary} />
             <Text variant="meta" color="secondary">Back</Text>
           </Pressable>
@@ -61,6 +75,7 @@ export function Sheet({
   eyebrow,
   children,
   footer,
+  header,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -68,6 +83,8 @@ export function Sheet({
   eyebrow?: string;
   children: ReactNode;
   footer?: ReactNode;
+  /** pinned under the title (e.g. a search field) — stays put while the body scrolls */
+  header?: ReactNode;
 }) {
   const insets = useSafeAreaInsets();
   const [mounted, setMounted] = useState(visible);
@@ -142,11 +159,12 @@ export function Sheet({
                 {eyebrow ? <Label numberOfLines={1}>{eyebrow.toUpperCase()}</Label> : null}
                 <Text variant="heading" numberOfLines={2}>{title ?? ""}</Text>
               </View>
-              <Pressable onPress={onClose} hitSlop={12} accessibilityRole="button" accessibilityLabel="Close sheet">
-                <Ionicons name="close" size={22} color={colors.textSecondary} />
+              <Pressable onPress={onClose} hitSlop={8} accessibilityRole="button" accessibilityLabel="Close sheet" style={{ width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface }}>
+                <Ionicons name="close" size={20} color={colors.textPrimary} />
               </Pressable>
             </View>
           </View>
+          {header ? <View style={{ paddingHorizontal: 20, paddingBottom: 8, gap: 8 }}>{header}</View> : null}
           <ScrollView
             contentContainerStyle={{ padding: 20, paddingTop: 8, paddingBottom: footer ? 16 : 24 + insets.bottom, gap: 12 }}
             keyboardShouldPersistTaps="handled"
@@ -203,6 +221,7 @@ export function Stepper({
   min = 0,
   max = 9999,
   compact,
+  large,
   placeholder = "—",
 }: {
   label: string;
@@ -213,6 +232,8 @@ export function Stepper({
   min?: number;
   max?: number;
   compact?: boolean;
+  /** big thumb targets for mid-workout logging */
+  large?: boolean;
   placeholder?: string;
 }) {
   const [text, setText] = useState<string | null>(null);
@@ -221,7 +242,40 @@ export function Stepper({
     Haptics.selectionAsync().catch(() => {});
     onChange(clamp((value ?? (dir > 0 ? 0 : step)) + dir * step));
   };
-  const h = compact ? 40 : 52;
+  const h = compact ? 40 : large ? 68 : 52;
+  if (large) {
+    return (
+      <View style={{ flex: 1, gap: 8 }}>
+        <Label style={{ textAlign: "center" }}>{label.toUpperCase()}{suffix ? ` · ${suffix}` : ""}</Label>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <Pressable onPress={() => bump(-1)} accessibilityLabel={`Decrease ${label}`} style={({ pressed }) => ({ width: h, height: h, borderRadius: h / 2, alignItems: "center", justifyContent: "center", backgroundColor: pressed ? colors.surfaceRaised : colors.surface })}>
+            <Ionicons name="remove" size={28} color={colors.textPrimary} />
+          </Pressable>
+          <RecessedSurface radiusSize="small" style={{ flex: 1, height: h, justifyContent: "center" }}>
+            <TextInput
+              value={text ?? (value == null ? "" : String(value))}
+              placeholder={placeholder}
+              placeholderTextColor={colors.textTertiary}
+              onFocus={() => setText(value == null ? "" : String(value))}
+              onChangeText={setText}
+              onBlur={() => {
+                const n = parseFloat((text ?? "").replace(",", "."));
+                onChange(text == null || text.trim() === "" ? null : Number.isFinite(n) ? clamp(n) : value);
+                setText(null);
+              }}
+              keyboardType="decimal-pad"
+              selectTextOnFocus
+              accessibilityLabel={label}
+              style={{ textAlign: "center", color: colors.textPrimary, fontFamily: fonts.num, fontSize: 32, paddingVertical: 0, paddingHorizontal: 0 }}
+            />
+          </RecessedSurface>
+          <Pressable onPress={() => bump(1)} accessibilityLabel={`Increase ${label}`} style={({ pressed }) => ({ width: h, height: h, borderRadius: h / 2, alignItems: "center", justifyContent: "center", backgroundColor: pressed ? colors.surfaceRaised : colors.surface })}>
+            <Ionicons name="add" size={28} color={colors.textPrimary} />
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
   return (
     <View style={{ flex: 1, gap: 6, minWidth: compact ? 96 : 0 }}>
       <Label style={{ textAlign: "center" }}>{label.toUpperCase()}{suffix ? ` · ${suffix}` : ""}</Label>

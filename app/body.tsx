@@ -17,7 +17,7 @@ import { fromKg, unitLabel } from "@/lib/workouts";
 import { useTheme } from "@/theme/theme-provider";
 import { gated } from "@/components/feature-gate";
 import { colors } from "@/theme/tokens";
-import { Screen } from "@/components/ui/screen";
+import { Pinned, Screen } from "@/components/ui/screen";
 import { ProgressBar } from "@/components/ui/controls";
 import { AreaChart, Card, EmptyState, ErrorState, PageHeader, PillTabs, Segmented, Sheet, Skel } from "@/components/ui/extra";
 import { Label, Text } from "@/components/ui/text";
@@ -53,12 +53,12 @@ function BodyScreen() {
   return (
     <Screen onRefresh={() => Promise.all([map.reload(), bal.reload(), today.reload()])}>
       <PageHeader title="Muscle map" subtitle={mode === "fatigue" ? "How recovered each muscle is, from your last 7 days." : "Where your training load landed."} />
-      <View style={{ gap: 10 }}>
+      <Pinned>
         <Segmented value={mode} onChange={setMode} options={[{ value: "activation", label: "Activation" }, { value: "fatigue", label: "Fatigue" }]} />
         {mode === "activation" ? <PillTabs value={range} onChange={setRange} options={[{ value: "today", label: "Today" }, { value: "week", label: "Week" }, { value: "month", label: "Month" }]} /> : null}
-      </View>
+      </Pinned>
 
-      <Card style={{ marginTop: 14, alignItems: "center" }}>
+      <Card style={{ alignItems: "center" }}>
         <View style={{ alignSelf: "stretch" }}><PillTabs value={view} onChange={setView} options={[{ value: "front", label: "Front" }, { value: "back", label: "Back" }]} /></View>
         {map.initialLoading ? <Skel h={320} r={24} style={{ marginTop: 10 }} /> : map.error && !map.data ? <ErrorState message={errorMessage(map.error)} onRetry={map.refetch} /> : (
           <>

@@ -7,12 +7,11 @@
  * and persists it per session so nothing is lost on navigation or app kill.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Animated, AppState, Easing, Image, Pressable, ScrollView, Vibration, View } from "react-native";
+import { ActivityIndicator, Alert, Animated, AppState, Image, Pressable, ScrollView, Vibration, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Svg, { Circle } from "react-native-svg";
 import { api } from "@/api/client";
 import { errorMessage, invalidateResource } from "@/api/hooks";
 import { useAuth } from "@/auth/auth-provider";
@@ -42,15 +41,17 @@ import {
 import { trainerCue, type CueContext, type CueEvent } from "@/lib/cues";
 import { plateCombo, plateLabel } from "@/lib/plates";
 import { cancelRestAlert, scheduleRestAlert } from "@/lib/reminders";
+import { setDevicePrefs, useDevicePrefs } from "@/lib/device-prefs";
 import { fmtClock, fmtDuration, fromKg, repRange, saveSessionAsTemplate, startRepeat, toKg, unitLabel, type Units } from "@/lib/workouts";
 import { useEquippedItem, useTheme } from "@/theme/theme-provider";
-import { colors, fonts, radius, shadow } from "@/theme/tokens";
+import { colors, fonts, radius } from "@/theme/tokens";
 import { repdbEntryFor, repdbImage } from "@/lib/repdb";
 import { ExerciseDetailSheet, ExercisePicker, ExerciseThumb } from "@/components/exercise";
 import { Atmosphere, Screen } from "@/components/ui/screen";
 import { Button, Chip } from "@/components/ui/controls";
 import { EmptyState, PageSkeleton, SettingRow, Sheet, Stepper } from "@/components/ui/extra";
 import { KaiOrb } from "@/components/ui/kai-orb";
+import { PressScale } from "@/components/ui/pressable";
 import { toast } from "@/components/ui/toast";
 import { Label, Num, Text } from "@/components/ui/text";
 
@@ -103,6 +104,9 @@ export default function ActiveWorkout() {
   const [busy, setBusy] = useState<string | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [savedTpl, setSavedTpl] = useState(false);
+  const [setOpts, setSetOpts] = useState(false);
+  // timers stay out of sight unless asked for (⋯ menu); rest shows as a bar
+  const dp = useDevicePrefs();
   const priorRef = useRef<WorkoutSession[]>([]);
 
   const id = session?.id ?? null;
@@ -562,39 +566,31 @@ export default function ActiveWorkout() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <Atmosphere />
-      {/* HUD */}
-      <View style={{ paddingTop: insets.top + 6, paddingHorizontal: 20, paddingBottom: 10, gap: 8 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-          <Pressable onPress={() => setSheet("end")} hitSlop={12} accessibilityLabel="Leave workout" style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
-            <Ionicons name="chevron-down" size={22} color={colors.textSecondary} />
-            <Text variant="meta" color="secondary">Plan</Text>
-          </Pressable>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <Pressable onPress={togglePause} accessibilityLabel={ui.paused ? "Resume workout" : "Pause workout"} style={{ flexDirection: "row", alignItems: "center", gap: 6, height: 34, paddingHorizontal: 12, borderRadius: radius.pill, backgroundColor: ui.paused ? "rgba(255,182,97,0.18)" : colors.surface }}>
-              <Ionicons name={ui.paused ? "play" : "pause"} size={13} color={ui.paused ? colors.amber : colors.textSecondary} />
-              <Num size={14}>{fmtClock(elapsed)}</Num>
-            </Pressable>
-            <Pressable onPress={() => setSheet("menu")} accessibilityLabel="Workout options" hitSlop={5} style={{ width: 44, height: 34, borderRadius: radius.pill, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" }}>
-              <Ionicons name="ellipsis-horizontal" size={18} color={colors.textSecondary} />
-            </Pressable>
+      {/* HUD — compact: leave · title + progress · pause · more */}
+      <View style={{ paddingTop: insets.top + 4, paddingHorizontal: 16, paddingBottom: 8, gap: 10 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <HudButton icon="chevron-down" label="Leave workout" onPress={() => setSheet("end")} />
+          <View style={{ flex: 1, alignItems: "center" }}>
+            <Text style={{ fontFamily: fonts.semibold, fontSize: 16 }} numberOfLines={1}>{session.name}</Text>
+            {trainable.length ? (
+              <Text variant="meta" color="tertiary" numberOfLines={1}>
+                {prog.setsDone}/{prog.setsTotal} sets · {Math.round(fromKg(liveVolKg, units)).toLocaleString()} {u}{dp.workoutClock ? ` · ${fmtClock(elapsed)}` : ""}
+              </Text>
+            ) : null}
           </View>
+          <HudButton icon={ui.paused ? "play" : "pause"} label={ui.paused ? "Resume workout" : "Pause workout"} onPress={togglePause} active={ui.paused} />
+          <HudButton icon="ellipsis-horizontal" label="Workout options" onPress={() => setSheet("menu")} />
         </View>
-        <Text variant="heading" numberOfLines={1}>{session.name}</Text>
         <View style={{ flexDirection: "row", gap: 4 }}>
           {trainable.map((p) => {
             const ph = phaseOf(p, ui);
             const c = ph === "done" ? colors.lime : p.id === ui.cursor ? colors.pink : ph === "deferred" ? colors.amber : "rgba(255,255,255,0.14)";
-            return <Pressable key={p.id} onPress={() => focus(p.id)} hitSlop={{ top: 10, bottom: 10 }} accessibilityLabel={`Go to ${p.exercise.name}`} style={{ flex: 1, height: 5, borderRadius: 3, backgroundColor: c }} />;
+            return <Pressable key={p.id} onPress={() => focus(p.id)} hitSlop={{ top: 12, bottom: 12 }} accessibilityLabel={`Go to ${p.exercise.name}`} style={{ flex: 1, height: 5, borderRadius: 3, backgroundColor: c }} />;
           })}
         </View>
-        {trainable.length ? (
-          <Text variant="meta" color="tertiary">
-            Exercise {Math.min(prog.exercisesDone + 1, prog.exercisesTotal)}/{prog.exercisesTotal} · {prog.setsDone}/{prog.setsTotal} sets · {Math.round(fromKg(liveVolKg, units)).toLocaleString()} {u}
-          </Text>
-        ) : null}
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: insets.bottom + 40, gap: 14 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24, gap: 16 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         {ui.paused ? (
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 14, borderRadius: radius.medium, backgroundColor: "rgba(255,182,97,0.12)", borderWidth: 1, borderColor: "rgba(255,182,97,0.3)" }}>
             <Text style={{ color: colors.amber }}>Workout paused · timer stopped</Text>
@@ -612,16 +608,12 @@ export default function ActiveWorkout() {
           </View>
         ) : null}
 
-        {current && resting ? (
-          <RestCard left={restLeft} total={ui.restTotal} onAdjust={adjustRest} onSkip={stopRest} current={current} ui={ui} units={units} cue={trainerCue(cue.event, cue.ctx)} look={look} />
-        ) : current ? (
+        {current ? (
           <FocusCard
             perf={current}
             ui={ui}
             units={units}
             step={step}
-            busy={busy === "complete"}
-            paused={ui.paused}
             position={trainable.findIndex((p) => p.id === current.id) + 1}
             total={trainable.length}
             superset={current.supersetGroup != null ? `Superset ${supersetLetter(current.supersetGroup)} · ${supersetPeers(session, current).findIndex((p) => p.id === current.id) + 1}/${supersetPeers(session, current).length}` : null}
@@ -630,7 +622,8 @@ export default function ActiveWorkout() {
             look={look}
             onPatch={(row, p) => patchDraft(current, row, p)}
             onAmrap={(row) => patchUI((c) => ({ ...c, amrap: row.amrap ? c.amrap.filter((k) => k !== setKey(current.id, row.n)) : [...c.amrap, setKey(current.id, row.n)] }))}
-            onComplete={completeActive}
+            opts={setOpts}
+            onCloseOpts={() => setSetOpts(false)}
             onAddSet={(w) => addSet(current, w)}
           />
         ) : session.performances.length ? (
@@ -645,9 +638,40 @@ export default function ActiveWorkout() {
           </View>
         ) : null}
 
-        {current && !resting ? <SetList perf={current} ui={ui} units={units} history={history[current.exercise.slug] ?? null} onToggle={(r) => (r.done ? ask("Undo this set?", "It will be removed from your log; the numbers stay as a draft.", "Undo set", () => toggleRow(current, r)) : toggleRow(current, r))} onDelete={(r) => ask("Delete this set?", `Set ${r.n} will be removed from ${current.exercise.name}.`, "Delete", () => deleteRow(current, r), true)} /> : null}
+        {current ? <SetList perf={current} ui={ui} units={units} history={history[current.exercise.slug] ?? null} onToggle={(r) => (r.done ? ask("Undo this set?", "It will be removed from your log; the numbers stay as a draft.", "Undo set", () => toggleRow(current, r)) : toggleRow(current, r))} onDelete={(r) => ask("Delete this set?", `Set ${r.n} will be removed from ${current.exercise.name}.`, "Delete", () => deleteRow(current, r), true)} /> : null}
 
       </ScrollView>
+
+      {/* bottom dock — the one thing to do next, in thumb reach */}
+      {current ? (
+        <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: insets.bottom + 12, backgroundColor: colors.surfaceOpaque, borderTopWidth: 1, borderTopColor: colors.lineSoft }}>
+          {resting ? (
+            <RestDock
+              left={restLeft}
+              total={ui.restTotal}
+              showCount={!!dp.restCountdown}
+              onToggleCount={() => setDevicePrefs({ restCountdown: !dp.restCountdown })}
+              onAdjust={adjustRest}
+              onSkip={stopRest}
+              onPlay={id && restLeft >= 20 ? () => router.push({ pathname: "/workout/play", params: { session: id } }) : undefined}
+            />
+          ) : (
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <DockButton icon="options-outline" label="Set" onPress={() => setSetOpts(true)} accessibilityLabel="Set options" />
+              <DockButton
+                icon="checkmark"
+                label={ui.paused ? "Paused — resume to log" : (() => { const r = activeRow(current, ui); const w = workingRows(current, ui); return r?.warmup ? "Complete warm-up" : `Complete set ${w.filter((x) => x.done).length + 1}`; })()}
+                tone="accent"
+                wide
+                row
+                busy={busy === "complete"}
+                disabled={ui.paused || !activeRow(current, ui)}
+                onPress={completeActive}
+              />
+            </View>
+          )}
+        </View>
+      ) : null}
 
       {/* workout menu — everything that isn't "log the next set" lives here */}
       <Sheet visible={sheet === "menu"} onClose={() => setSheet(null)} title="Workout options" eyebrow={session.name}>
@@ -656,6 +680,8 @@ export default function ActiveWorkout() {
         {current ? <SettingRow icon="swap-horizontal" title="Replace this exercise" onPress={fromMenu(() => { setSwapFor(current); setSheet("swap"); })} /> : null}
         {current ? <SettingRow icon="time-outline" title="Machine busy — do it later" onPress={fromMenu(() => ask("Move to later?", `${current.exercise.name} goes to the end of today's session.`, "Do it later", () => defer(current, "machine busy")))} /> : null}
         <SettingRow icon={ui.paused ? "play" : "pause"} title={ui.paused ? "Resume workout" : "Pause workout"} onPress={fromMenu(togglePause)} />
+        <SettingRow icon="stopwatch-outline" title={dp.workoutClock ? "Hide workout clock" : "Show workout clock"} hint={dp.workoutClock ? undefined : `${fmtDuration(elapsed)} so far`} onPress={fromMenu(() => setDevicePrefs({ workoutClock: !dp.workoutClock }))} />
+        <SettingRow icon="timer-outline" title={dp.restCountdown ? "Hide rest countdown" : "Always show rest countdown"} hint="Otherwise rest shows as a bar, with the seconds in the last 10" onPress={fromMenu(() => setDevicePrefs({ restCountdown: !dp.restCountdown }))} />
         <SettingRow icon="exit-outline" title="End workout" onPress={fromMenu(() => setSheet("end"))} />
       </Sheet>
 
@@ -744,8 +770,6 @@ function FocusCard(props: {
   ui: ActiveUI;
   units: Units;
   step: number;
-  busy: boolean;
-  paused: boolean;
   position: number;
   total: number;
   superset: string | null;
@@ -754,7 +778,8 @@ function FocusCard(props: {
   look?: string;
   onPatch: (row: SetRow, p: Partial<{ weightKg: number | null; reps: number | null; rpe: number | null; warmup: boolean }>) => void;
   onAmrap: (row: SetRow) => void;
-  onComplete: () => void;
+  opts: boolean;
+  onCloseOpts: () => void;
   onAddSet: (warmup: boolean) => void;
 }) {
   const { perf, ui, units } = props;
@@ -781,7 +806,8 @@ function FocusCard(props: {
   const bodyweight = !!perf.exercise.isBodyweight;
   const wDisp = row?.weightKg != null ? fromKg(row.weightKg, units) : null;
   const plates = wDisp != null && !bodyweight ? plateCombo(wDisp, units === "metric" ? 20 : 45, u) : null;
-  const [opts, setOpts] = useState(false);
+  const { opts } = props;
+  const setOpts = (v: boolean) => !v && props.onCloseOpts();
   const note = (perf.prescriptionAudit?.output as { note?: string } | undefined)?.note;
 
   const fillPrevious = () => {
@@ -793,13 +819,13 @@ function FocusCard(props: {
 
   if (!row) return null;
   return (
-    <View style={[{ borderRadius: radius.large, overflow: "hidden", backgroundColor: colors.surfaceOpaque, borderWidth: 1, borderColor: colors.lineSoft }, shadow.soft]}>
+    <View>
       {frames.length ? (
-        <View style={{ height: 130, backgroundColor: "#fff" }}>
+        <View style={{ height: 190, marginHorizontal: -16, backgroundColor: "#fff" }}>
           <Image source={{ uri: frames[frame % frames.length] }} style={{ flex: 1 }} resizeMode="contain" accessibilityLabel={`${perf.exercise.name} demonstration`} />
         </View>
       ) : null}
-      <View style={{ padding: 18, gap: 14 }}>
+      <View style={{ paddingTop: 16, gap: 18 }}>
         <View style={{ gap: 4 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             {props.superset ? <View style={{ paddingHorizontal: 8, height: 22, borderRadius: 11, justifyContent: "center", backgroundColor: "rgba(179,101,150,0.25)" }}><Text variant="meta" style={{ color: colors.pinkSoft }}>{props.superset}</Text></View> : null}
@@ -825,11 +851,11 @@ function FocusCard(props: {
 
         {!bodyweight ? (
           <View style={{ flexDirection: "row" }}>
-            <Stepper label="weight" suffix={u} value={wDisp} step={props.step} max={2000} onChange={(v) => props.onPatch(row, { weightKg: v == null ? null : toKg(v, units) })} />
+            <Stepper large label="weight" suffix={u} value={wDisp} step={props.step} max={2000} onChange={(v) => props.onPatch(row, { weightKg: v == null ? null : toKg(v, units) })} />
           </View>
         ) : null}
         <View style={{ flexDirection: "row" }}>
-          <Stepper label={row.amrap ? "reps · amrap" : "reps"} value={row.reps} step={1} max={200} onChange={(v) => props.onPatch(row, { reps: v == null ? null : Math.round(v) })} placeholder={row.amrap ? "max" : "—"} />
+          <Stepper large label={row.amrap ? "reps · amrap" : "reps"} value={row.reps} step={1} max={200} onChange={(v) => props.onPatch(row, { reps: v == null ? null : Math.round(v) })} placeholder={row.amrap ? "max" : "—"} />
         </View>
 
         {plates && plates.perSide.length ? (
@@ -841,11 +867,9 @@ function FocusCard(props: {
           </View>
         ) : null}
 
-        <Button label={props.paused ? "Paused — resume to log" : row.warmup ? "Complete warm-up" : `Complete set ${doneW + 1}`} variant="accent" loading={props.busy} disabled={props.paused} onPress={props.onComplete} icon={<Ionicons name="checkmark" size={20} color={colors.onColor} />} />
-
-        <Pressable onPress={() => setOpts(true)} accessibilityRole="button" style={{ alignSelf: "center", minHeight: 44, justifyContent: "center", paddingHorizontal: 12 }}>
-          <Text variant="meta" color="secondary">Set options{row.rpe != null ? ` · RPE ${row.rpe}` : ""}{row.amrap ? " · AMRAP" : ""}{row.warmup ? " · warm-up" : ""}</Text>
-        </Pressable>
+        {row.rpe != null || row.amrap || row.warmup ? (
+          <Text variant="meta" color="secondary" style={{ textAlign: "center" }}>{[row.rpe != null ? `RPE ${row.rpe}` : null, row.amrap ? "AMRAP" : null, row.warmup ? "Warm-up" : null].filter(Boolean).join(" · ")}</Text>
+        ) : null}
 
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingTop: 4 }}>
           <KaiOrb size={26} look={props.look} />
@@ -863,53 +887,60 @@ function FocusCard(props: {
   );
 }
 
-function RestCard({ left, total, onAdjust, onSkip, current, ui, units, cue, look }: { left: number; total: number; onAdjust: (d: number) => void; onSkip: () => void; current: ExercisePerformance; ui: ActiveUI; units: Units; cue: string; look?: string }) {
-  const size = 200;
-  const R = 86;
-  const C = 2 * Math.PI * R;
-  const frac = Math.max(0, Math.min(1, left / Math.max(1, total)));
-  const row = activeRow(current, ui);
-  const working = workingRows(current, ui);
-  const pulse = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const loop = Animated.loop(Animated.sequence([Animated.timing(pulse, { toValue: 1, duration: 1400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }), Animated.timing(pulse, { toValue: 0, duration: 1400, easing: Easing.inOut(Easing.sin), useNativeDriver: true })]));
-    loop.start();
-    return () => loop.stop();
-  }, [pulse]);
+type IconName = keyof typeof Ionicons.glyphMap;
+
+function HudButton({ icon, label, onPress, active }: { icon: IconName; label: string; onPress: () => void; active?: boolean }) {
   return (
-    <View style={[{ borderRadius: radius.large, padding: 20, backgroundColor: colors.surfaceOpaque, borderWidth: 1, borderColor: colors.lineSoft, alignItems: "center", gap: 16 }, shadow.soft]}>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-        <Ionicons name="timer-outline" size={14} color={colors.lime} />
-        <Label style={{ color: colors.lime }}>REST</Label>
-      </View>
-      <Animated.View style={{ width: size, height: size, alignItems: "center", justifyContent: "center", transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.02] }) }] }}>
-        <Svg width={size} height={size} style={{ position: "absolute", transform: [{ rotate: "-90deg" }] }}>
-          <Circle cx={size / 2} cy={size / 2} r={R} stroke="rgba(255,255,255,0.08)" strokeWidth={8} fill="none" />
-          <Circle cx={size / 2} cy={size / 2} r={R} stroke={colors.lime} strokeWidth={8} fill="none" strokeLinecap="round" strokeDasharray={`${C * frac} ${C}`} />
-        </Svg>
-        <Num size={52} accessibilityLabel={`${left} seconds of rest left`}>{fmtClock(left)}</Num>
-      </Animated.View>
-      <View style={{ flexDirection: "row", gap: 10 }}>
-        <Chip label="−15s" onPress={() => onAdjust(-15)} />
-        <Pressable onPress={onSkip} style={{ height: 36, paddingHorizontal: 22, borderRadius: radius.pill, backgroundColor: colors.lime, alignItems: "center", justifyContent: "center" }} accessibilityRole="button">
-          <Text style={{ color: "#1a1a1a", fontFamily: fonts.semibold }}>Ready</Text>
-        </Pressable>
-        <Chip label="+15s" onPress={() => onAdjust(15)} />
-      </View>
-      <View style={{ alignSelf: "stretch", flexDirection: "row", alignItems: "center", gap: 12, padding: 12, borderRadius: radius.small, backgroundColor: colors.surface }}>
-        <ExerciseThumb uri={current.exercise.imageStartUrl ?? current.exercise.imageEndUrl} name={current.exercise.name} size={44} />
-        <View style={{ flex: 1 }}>
-          <Label>NEXT UP</Label>
-          <Text numberOfLines={1}>{current.exercise.name}</Text>
-          <Text variant="meta" color="tertiary">
-            {row?.warmup ? "Warm-up" : `Set ${working.filter((r) => r.done).length + 1}/${working.length}`}
-            {row?.weightKg != null ? ` · ${fromKg(row.weightKg, units)} ${unitLabel(units)} × ${row.reps ?? "—"}` : ""}
-          </Text>
+    <PressScale onPress={onPress} accessibilityLabel={label} to={0.92} style={{ width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: active ? "rgba(255,182,97,0.2)" : colors.surface }}>
+      <Ionicons name={icon} size={20} color={active ? colors.amber : colors.textPrimary} />
+    </PressScale>
+  );
+}
+
+/** Big bottom-dock button. `wide` takes the free space; `row` lays icon and label side by side. */
+function DockButton({ icon, label, onPress, tone = "plain", wide, row, busy, disabled, accessibilityLabel }: { icon: IconName; label: string; onPress: () => void; tone?: "plain" | "accent" | "lime" | "cyan"; wide?: boolean; row?: boolean; busy?: boolean; disabled?: boolean; accessibilityLabel?: string }) {
+  const bg = tone === "accent" ? colors.pink : tone === "lime" ? colors.lime : tone === "cyan" ? "rgba(131,233,244,0.16)" : colors.surface;
+  const ink = tone === "accent" ? colors.onAccent : tone === "lime" ? "#1a1a1a" : tone === "cyan" ? colors.cyan : colors.textPrimary;
+  return (
+    <PressScale
+      onPress={onPress}
+      disabled={disabled || busy}
+      haptic="medium"
+      accessibilityLabel={accessibilityLabel ?? label}
+      style={{ flex: wide ? 2.4 : 1, height: 64, borderRadius: 22, backgroundColor: bg, alignItems: "center", justifyContent: "center", flexDirection: row ? "row" : "column", gap: row ? 10 : 2 }}
+    >
+      {busy ? <ActivityIndicator color={ink} /> : <Ionicons name={icon} size={row ? 24 : 22} color={ink} />}
+      <Text numberOfLines={1} style={{ color: ink, fontFamily: fonts.semibold, fontSize: row ? 18 : 13 }}>{label}</Text>
+    </PressScale>
+  );
+}
+
+/**
+ * Rest, as a slim bar in the dock instead of a big ring: the next set stays on
+ * screen to prep. Seconds are hidden unless you tap the bar (remembered) or
+ * it's the last 10 s; the phone still buzzes when rest ends.
+ */
+function RestDock({ left, total, showCount, onToggleCount, onAdjust, onSkip, onPlay }: { left: number; total: number; showCount: boolean; onToggleCount: () => void; onAdjust: (d: number) => void; onSkip: () => void; onPlay?: () => void }) {
+  const frac = Math.max(0, Math.min(1, left / Math.max(1, total)));
+  const reveal = showCount || left <= 10;
+  const low = left <= 10;
+  return (
+    <View style={{ gap: 12 }}>
+      <Pressable onPress={onToggleCount} accessibilityRole="button" accessibilityLabel={reveal ? `${left} seconds of rest left. Tap to hide the countdown` : "Resting. Tap to show the countdown"} style={{ gap: 8 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, minHeight: 24 }}>
+          <Ionicons name="timer-outline" size={16} color={low ? colors.amber : colors.lime} />
+          <Text style={{ flex: 1, fontFamily: fonts.semibold, color: low ? colors.amber : colors.lime }}>{low ? "Get ready" : "Resting"}</Text>
+          {reveal ? <Num size={20} style={{ color: low ? colors.amber : colors.textPrimary }}>{fmtClock(left)}</Num> : <Ionicons name="eye-outline" size={18} color={colors.textTertiary} />}
         </View>
-      </View>
-      <View style={{ alignSelf: "stretch", flexDirection: "row", alignItems: "center", gap: 10 }}>
-        <KaiOrb size={26} state="rest" look={look} />
-        <Text color="secondary" style={{ flex: 1, fontStyle: "italic" }}>{cue}</Text>
+        <View style={{ height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+          <View style={{ width: `${frac * 100}%`, height: 6, borderRadius: 3, backgroundColor: low ? colors.amber : colors.lime }} />
+        </View>
+      </Pressable>
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        <DockButton icon="remove" label="15s" onPress={() => onAdjust(-15)} accessibilityLabel="15 seconds less rest" />
+        {onPlay ? <DockButton icon="game-controller" label="Play" tone="cyan" onPress={onPlay} accessibilityLabel="Play a game while you rest" /> : null}
+        <DockButton icon="play-forward" label="Ready" tone="lime" wide onPress={onSkip} accessibilityLabel="End rest, ready for the next set" />
+        <DockButton icon="add" label="15s" onPress={() => onAdjust(15)} accessibilityLabel="15 seconds more rest" />
       </View>
     </View>
   );
@@ -927,21 +958,21 @@ function SetList({ perf, ui, units, history, onToggle, onDelete }: { perf: Exerc
         const idx = r.warmup ? -1 : wi++;
         const prev = idx >= 0 ? lastSets[idx] : undefined;
         return (
-          <View key={r.n} style={{ padding: 12, borderRadius: radius.small, backgroundColor: r.done ? "rgba(216,255,99,0.08)" : colors.surface, gap: 2 }}>
+          <View key={r.n} style={{ paddingVertical: 10, paddingLeft: 14, paddingRight: 8, borderRadius: radius.small, backgroundColor: r.done ? "rgba(216,255,99,0.08)" : colors.surface, gap: 2 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
               <Text style={{ width: 34, fontFamily: fonts.num, color: r.warmup ? colors.cyan : colors.textTertiary }}>{r.warmup ? "W/U" : `#${idx + 1}`}</Text>
-              <Text style={{ flex: 1, fontFamily: fonts.num, fontSize: 15 }}>
+              <Text style={{ flex: 1, fontFamily: fonts.num, fontSize: 17 }}>
                 {r.weightKg != null ? `${fromKg(r.weightKg, units)} ${u}` : "—"} × {r.amrap && r.reps == null ? "AMRAP" : r.reps ?? "—"}
                 {r.rpe != null ? ` @ ${r.rpe}` : ""}
               </Text>
-              <Pressable onPress={() => onToggle(r)} hitSlop={6} accessibilityLabel={r.done ? "Mark set not done" : "Mark set done"} style={{ width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center", backgroundColor: r.done ? colors.lime : "rgba(255,255,255,0.08)" }}>
-                <Ionicons name="checkmark" size={17} color={r.done ? "#1a1a1a" : colors.textTertiary} />
+              <Pressable onPress={() => onToggle(r)} hitSlop={6} accessibilityLabel={r.done ? "Mark set not done" : "Mark set done"} style={{ width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center", backgroundColor: r.done ? colors.lime : "rgba(255,255,255,0.08)" }}>
+                <Ionicons name="checkmark" size={22} color={r.done ? "#1a1a1a" : colors.textTertiary} />
               </Pressable>
-              <Pressable onPress={() => onDelete(r)} hitSlop={6} accessibilityLabel="Delete set" style={{ width: 30, height: 34, alignItems: "center", justifyContent: "center" }}>
-                <Ionicons name="close" size={17} color={colors.textTertiary} />
+              <Pressable onPress={() => onDelete(r)} hitSlop={6} accessibilityLabel="Delete set" style={{ width: 44, height: 48, alignItems: "center", justifyContent: "center" }}>
+                <Ionicons name="close" size={20} color={colors.textTertiary} />
               </Pressable>
             </View>
-            {prev && !r.done ? <Text variant="meta" color="tertiary" style={{ marginLeft: 44 }}>Last time: {prev.weightKg != null ? fromKg(prev.weightKg, units) : "BW"} {u} × {prev.reps ?? "—"}</Text> : null}
+            {prev && !r.done ? <Text variant="meta" color="tertiary" style={{ marginLeft: 44, marginTop: -4 }}>Last time: {prev.weightKg != null ? fromKg(prev.weightKg, units) : "BW"} {u} × {prev.reps ?? "—"}</Text> : null}
           </View>
         );
       })}
