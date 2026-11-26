@@ -412,6 +412,11 @@ export const api = {
     finish: (sessionId: string, body?: { durationSeconds?: number; caloriesEstimate?: number }) =>
       post<T.WorkoutSession>(`/sessions/${sessionId}/finish`, body ?? {}),
     abandon: (sessionId: string) => post<T.WorkoutSession>(`/sessions/${sessionId}/abandon`),
+    /** edit a finished workout; the server re-reads records from the corrected history */
+    update: (sessionId: string, body: { name?: string; startedAt?: string; durationSeconds?: number }) =>
+      patch<T.WorkoutSession>(`/sessions/${sessionId}`, body),
+    remove: (sessionId: string) => del<void>(`/sessions/${sessionId}`),
+    removePerformance: (sessionId: string, perfId: string) => del<void>(`/sessions/${sessionId}/performances/${perfId}`),
   },
 
   // body
