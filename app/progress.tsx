@@ -15,6 +15,7 @@ import { Screen } from "@/components/ui/screen";
 import { Button, Chip, ProgressBar, SectionHeading } from "@/components/ui/controls";
 import { AreaChart, Card, Dial, EmptyState, MiniBars, PageHeader, PageSkeleton, PillTabs, ScrubChart, Segmented, Sheet, Sparkline } from "@/components/ui/extra";
 import { Label, Num, Text } from "@/components/ui/text";
+import { Quiet } from "@/components/quiet";
 
 const RANGES = [
   { value: "4", label: "4w" },
@@ -96,7 +97,7 @@ function ProgressScreen() {
       <PageHeader title="Your trends" subtitle={overview.data?.summary} />
       {noData ? <EmptyState title="Nothing to chart yet" body="Finish a workout and your trends appear here." /> : null}
 
-      <View style={{ flexDirection: "row", gap: 10, marginBottom: 14 }}>
+      <Quiet widgetKey="progress-stats"><View style={{ flexDirection: "row", gap: 10, marginBottom: 14 }}>
         {[
           { l: "SESSIONS", v: String(overview.data?.sessions ?? 0) },
           { l: `VOLUME (${u})`, v: (() => { const v = fromKg(overview.data?.totalVolumeKg ?? 0, units); return v >= 1000 ? `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}k` : String(Math.round(v)); })() },
@@ -104,14 +105,14 @@ function ProgressScreen() {
         ].map((s) => (
           <Card key={s.l} style={{ flex: 1, marginBottom: 0, padding: 14 }}><Label>{s.l}</Label><Num size={24} style={{ marginTop: 6 }}>{s.v}</Num></Card>
         ))}
-      </View>
+      </View></Quiet>
 
       <CheckinCard />
 
       <Card title="Consistency">
         <Segmented value={weeks} onChange={setWeeks} options={RANGES.map((r) => ({ value: r.value, label: r.label }))} />
         {c ? (
-          <View style={{ marginTop: 14, gap: 12 }}>
+          <Quiet widgetKey="progress-consistency"><View style={{ marginTop: 14, gap: 12 }}>
             <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
               <View style={{ alignItems: "center", gap: 4 }}><Label>STREAK</Label><Num size={24}>{c.currentStreak}</Num></View>
               <View style={{ alignItems: "center", gap: 4 }}><Label>ADHERENCE</Label><Num size={24}>{Math.round(c.adherence * 100)}%</Num></View>
@@ -121,7 +122,7 @@ function ProgressScreen() {
             <Text variant="meta" color="tertiary">Sessions per week</Text>
             <AreaChart series={[{ color: colors.cyan, data: c.weeks.map((w) => w.volumeKg) }]} height={110} />
             <Text variant="meta" color="tertiary">Weekly volume</Text>
-          </View>
+          </View></Quiet>
         ) : null}
       </Card>
 
@@ -133,7 +134,7 @@ function ProgressScreen() {
             </View>
             <PillTabs value={days} onChange={setDays} options={STRENGTH_RANGES.map((r) => ({ value: r.value, label: r.label }))} />
             {strength.data && strength.data.series.length >= 2 ? (
-              <>
+              <Quiet widgetKey="progress-strength">
                 <ScrubChart data={strength.data.series.map((p) => fromKg(p.e1rm, units))} labels={strength.data.series.map((p) => new Date(p.date).toLocaleDateString(undefined, { month: "short", day: "numeric" }))} unit={u} height={150} />
                 <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
                   <Num size={28}>{fromKg(strength.data.series.at(-1)!.e1rm, units)}</Num>
@@ -141,7 +142,7 @@ function ProgressScreen() {
                   {(() => { const d0 = fromKg(strength.data!.series.at(-1)!.e1rm - strength.data!.series[0].e1rm, units); return <Text variant="meta" style={{ marginLeft: "auto", color: d0 >= 0 ? colors.lime : colors.amber }}>{d0 >= 0 ? "+" : ""}{Math.round(d0 * 10) / 10} {u} over {STRENGTH_RANGES.find((r) => r.value === days)?.label}</Text>; })()}
                 </View>
                 <Text variant="meta" color="tertiary">Drag across the chart to read a point. Epley formula.</Text>
-              </>
+              </Quiet>
             ) : <Text color="tertiary">Need at least two sessions with this lift in this range.</Text>}
           </View>
         )}
@@ -150,12 +151,12 @@ function ProgressScreen() {
       <Card title="Personal records">
         {(prs.data ?? []).length === 0 ? <Text color="secondary">Beat a previous best on any lift and it lands here automatically.</Text> : (
           <>
-            {[...(prs.data ?? [])].filter((p) => p.recordType === "max_1rm_estimate" || p.recordType === "max_weight").sort((a, b) => Date.parse(b.achievedAt) - Date.parse(a.achievedAt)).slice(0, 6).map((p) => (
+            <Quiet widgetKey="progress-prs">{[...(prs.data ?? [])].filter((p) => p.recordType === "max_1rm_estimate" || p.recordType === "max_weight").sort((a, b) => Date.parse(b.achievedAt) - Date.parse(a.achievedAt)).slice(0, 6).map((p) => (
               <View key={p.id} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.lineSoft, gap: 10 }}>
                 <View style={{ flex: 1 }}><Text numberOfLines={1}>{p.exercise?.name ?? "Lift"}</Text><Text variant="meta" color="tertiary">{p.recordType === "max_weight" ? "Heaviest set" : "Est. 1RM"} · {new Date(p.achievedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</Text></View>
                 <Num size={16} style={{ color: colors.lime }}>{Math.round(fromKg(p.value, units))} {u}</Num>
               </View>
-            ))}
+            ))}</Quiet>
             <Pressable onPress={() => router.push("/records")} style={{ paddingTop: 10 }}><Text variant="meta" color="pink">View all records →</Text></Pressable>
           </>
         )}
@@ -163,18 +164,18 @@ function ProgressScreen() {
 
       {(muscles.data?.muscles ?? []).some((m) => m.score > 0) ? (
         <Card title="Volume by muscle · 30 days">
-          {[...(muscles.data?.muscles ?? [])].filter((m) => m.score > 0).sort((a, b) => b.score - a.score).slice(0, 8).map((m) => (
+          <Quiet widgetKey="progress-muscles">{[...(muscles.data?.muscles ?? [])].filter((m) => m.score > 0).sort((a, b) => b.score - a.score).slice(0, 8).map((m) => (
             <View key={m.key} style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 5 }}>
               <Text variant="meta" color="secondary" style={{ width: 96 }} numberOfLines={1}>{m.name}</Text>
               <View style={{ flex: 1 }}><ProgressBar pct={m.score * 100} tone="mauve" height={7} /></View>
               <Num size={12} color="tertiary" style={{ width: 36, textAlign: "right" }}>{Math.round(m.score * 100)}%</Num>
             </View>
-          ))}
+          ))}</Quiet>
         </Card>
       ) : null}
 
       {load.data ? (
-        <Card title="Training load">
+        <Card title="Training load"><Quiet widgetKey="progress-load">
           <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
             <View style={{ alignItems: "center", gap: 4 }}><Label>FITNESS</Label><Num size={22}>{Math.round(load.data.ctl)}</Num></View>
             <View style={{ alignItems: "center", gap: 4 }}><Label>FATIGUE</Label><Num size={22}>{Math.round(load.data.atl)}</Num></View>
@@ -182,11 +183,11 @@ function ProgressScreen() {
           </View>
           <Text color="secondary" style={{ marginTop: 10 }}>Status: {load.data.status}</Text>
           <Sparkline data={load.data.weeklyTrimp} width={280} height={44} color={colors.cyan} />
-        </Card>
+        </Quiet></Card>
       ) : null}
 
       {patterns.data && !patterns.data.insufficient_data ? (
-        <Card title="Patterns">
+        <Card title="Patterns"><Quiet widgetKey="progress-patterns">
           {patterns.data.insight ? <Text color="secondary">{patterns.data.insight}</Text> : null}
           {patterns.data.bestDay ? <Text variant="meta" color="tertiary" style={{ marginTop: 6 }}>Best day: {patterns.data.bestDay}{patterns.data.bestTimeWindow ? ` · ${patterns.data.bestTimeWindow}` : ""}</Text> : null}
           {patterns.data.circadian.filter((b) => b.sessions >= 3).map((b) => (
@@ -195,11 +196,11 @@ function ProgressScreen() {
               <Text variant="meta" style={{ color: b.relativePerformance >= 0 ? colors.lime : colors.amber }}>{b.relativePerformance > 0 ? "+" : ""}{b.relativePerformance}% vol</Text>
             </View>
           ))}
-        </Card>
+        </Quiet></Card>
       ) : null}
 
       {corr.data && !corr.data.insufficient_data ? (
-        <Card title="Protein vs. volume">
+        <Card title="Protein vs. volume"><Quiet widgetKey="progress-protein">
           <Text color="secondary">Correlation {corr.data.correlation} — {corr.data.interpretation}</Text>
           {corr.data.weeks.length >= 3 ? (
             <View style={{ marginTop: 10, gap: 4 }}>
@@ -207,7 +208,7 @@ function ProgressScreen() {
               <Text variant="meta" color="tertiary">Weekly volume · avg protein {Math.round(corr.data.weeks.slice(-8).reduce((n, w) => n + w.avgProteinG, 0) / Math.min(8, corr.data.weeks.length))} g/day</Text>
             </View>
           ) : null}
-        </Card>
+        </Quiet></Card>
       ) : null}
 
       <SectionHeading title="Body measurements" action="+ Log" onAction={() => setMeasureOpen(true)} />
@@ -222,7 +223,7 @@ function ProgressScreen() {
           const w = sorted.filter((m) => m.weightKg).map((m) => fromKg(m.weightKg!, units));
           const last = sorted[sorted.length - 1];
           return (
-            <View style={{ gap: 10 }}>
+            <Quiet widgetKey="progress-body"><View style={{ gap: 10 }}>
               {w.length >= 2 ? <ScrubChart data={w} unit={u} height={110} /> : null}
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14 }}>
                 {last?.weightKg ? <View><Num size={20}>{fromKg(last.weightKg, units)}</Num><Label>WEIGHT {u.toUpperCase()}</Label></View> : null}
@@ -230,7 +231,7 @@ function ProgressScreen() {
                 {last?.waistCm ? <View><Num size={20}>{units === "metric" ? last.waistCm : Math.round((last.waistCm / 2.54) * 10) / 10}</Num><Label>WAIST {units === "metric" ? "CM" : "IN"}</Label></View> : null}
               </View>
               {last?.recordedAt ? <Text variant="meta" color="tertiary">Last logged {new Date(last.recordedAt).toLocaleDateString()}</Text> : null}
-            </View>
+            </View></Quiet>
           );
         })()}
       </Card>

@@ -27,6 +27,7 @@ import { Card, Dial, EmptyState, ErrorState, PillTabs, Segmented, Sheet, Skel } 
 import { SoftSurface } from "@/components/ui/surface";
 import { toast } from "@/components/ui/toast";
 import { Label, Num, Text } from "@/components/ui/text";
+import { Quiet } from "@/components/quiet";
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
@@ -139,7 +140,7 @@ export default function Nutrition() {
 
           {d ? (
             <FadeSwap id="ready" style={{ gap: 14 }}>
-              <DaySummary day={d} onAdjust={() => setGoalOpen(true)} />
+              <Quiet widgetKey="nutrition-summary"><DaySummary day={d} onAdjust={() => setGoalOpen(true)} /></Quiet>
 
               <View style={{ gap: 4 }}>
                 <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
@@ -179,7 +180,7 @@ export default function Nutrition() {
           ) : null}
         </View>
       ) : (
-        <Trends onLog={() => setTab("today")} />
+        <Quiet widgetKey="nutrition-trends"><Trends onLog={() => setTab("today")} /></Quiet>
       )}
 
       <AddFoodSheet open={add.open} meal={add.meal} date={date} initialTab={add.tab ?? "search"} onClose={() => setAdd((s) => ({ ...s, open: false, tab: undefined }))} onLogged={(nd) => { setDay(nd); setAdd((s) => ({ ...s, open: false, tab: undefined })); }} />

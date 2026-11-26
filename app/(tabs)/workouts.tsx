@@ -30,6 +30,7 @@ import { ActionMenu, Card, EmptyState, ErrorState, PillTabs, Segmented, Sheet, S
 import { ExerciseThumb } from "@/components/exercise";
 import { PopoverMenu } from "@/components/ui/popover";
 import { ProfileMenu } from "@/components/profile-menu";
+import { Quiet } from "@/components/quiet";
 import { Fill } from "@/components/ui/gradient";
 import { PressScale } from "@/components/ui/pressable";
 import { toast } from "@/components/ui/toast";
@@ -240,6 +241,7 @@ export default function Workouts() {
             </Card>
           ) : null}
 
+          <Quiet widgetKey="train-today">
           <Card variant={active.data ? "default" : "hero"} style={{ marginBottom: 0 }}>
             {planned.initialLoading ? (
               <View style={{ gap: 10 }}><Skel h={14} w="40%" /><Skel h={24} w="70%" /><Skel h={54} r={27} /></View>
@@ -283,6 +285,7 @@ export default function Workouts() {
               </>
             )}
           </Card>
+          </Quiet>
 
           <View>
             <SectionHeading title="Recommended" action="All templates" onAction={() => setTab("templates")} />
@@ -294,11 +297,11 @@ export default function Workouts() {
           <View>
             <SectionHeading title="Recent workouts" action="History" onAction={() => setTab("history")} />
             {history.initialLoading ? <Skel h={64} r={24} /> : sessions.length === 0 ? <EmptyState title="No finished sessions yet" body="Completed workouts show up here." /> : (
-              <Card variant="compact" style={{ marginBottom: 0 }}>
+              <Quiet widgetKey="train-recent"><Card variant="compact" style={{ marginBottom: 0 }}>
                 <View style={{ gap: 4 }}>
                   {sessions.slice(0, 4).map((s) => <SessionRow key={s.id} s={s} units={units} onPress={() => setDetail(s)} trailing={<Button label={busy === `repeat:${s.id}` ? "…" : "Repeat"} variant="text" onPress={() => repeat(s)} />} />)}
                 </View>
-              </Card>
+              </Card></Quiet>
             )}
           </View>
         </View>

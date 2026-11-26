@@ -15,6 +15,7 @@ import { GoalLogSheet } from "@/components/goal-log";
 import { colors, radius, type Tone } from "@/theme/tokens";
 import { Screen } from "@/components/ui/screen";
 import { Button, Chip, Field, SectionHeading } from "@/components/ui/controls";
+import { Quiet } from "@/components/quiet";
 import { ActionMenu, EmptyState, ErrorState, PageHeader, PillTabs, RingValue, Sheet, Skel } from "@/components/ui/extra";
 import { SoftSurface } from "@/components/ui/surface";
 import { toast } from "@/components/ui/toast";
@@ -78,7 +79,7 @@ function GoalsScreen() {
     const tone = (TONES.includes(g.tone as Tone) ? g.tone : "pink") as Tone;
     return (
       <Pressable key={g.id} onPress={() => setLogGoal(g)} onLongPress={() => setMenu(g)} accessibilityHint="Tap to log, long-press for options">
-        <SoftSurface style={{ padding: 16, marginBottom: 10 }}>
+        <Quiet widgetKey="goals-list"><SoftSurface style={{ padding: 16, marginBottom: 10 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
             <RingValue pct={pct} size={52} stroke={5} tone={tone} color={complete ? colors.lime : undefined}>
               {complete ? <Ionicons name="checkmark" size={20} color={colors.lime} /> : <Text variant="meta" color="secondary">{Math.round(Math.min(100, pct))}%</Text>}
@@ -93,7 +94,7 @@ function GoalsScreen() {
             </View>
             <Pressable onPress={() => setMenu(g)} hitSlop={10} accessibilityLabel={`Options for ${g.label}`}><Ionicons name="ellipsis-horizontal" size={20} color={colors.textTertiary} /></Pressable>
           </View>
-        </SoftSurface>
+        </SoftSurface></Quiet>
       </Pressable>
     );
   };
