@@ -1,4 +1,4 @@
-import { Alert, Pressable, View } from "react-native";
+import { Alert, Platform, Pressable, View } from "react-native";
 import { useNotifications, useWallet } from "@/api/hooks";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -22,6 +22,7 @@ const ITEMS: Item[] = [
   { to: "/records", label: "Records", hint: "PRs and achievements", icon: "trophy-outline" },
   { to: "/goals", label: "Goals", hint: "Daily & weekly targets", icon: "flag-outline", feature: "goals" },
   { to: "/exercises", label: "Exercise library", hint: "Search every movement", icon: "library-outline" },
+  ...(Platform.OS === "android" ? [{ to: "/app-lock", label: "App lock", hint: "Spend coins to open social apps", icon: "lock-closed-outline" } as Item] : []),
   { to: "/games", label: "Games", hint: "Quick games for rest periods", icon: "game-controller-outline" },
   { to: "/store", label: "Store", hint: "Spend coins on cosmetics", icon: "bag-handle-outline", feature: "store" },
   { to: "/notifications", label: "Notifications", hint: "Reminders & milestones", icon: "notifications-outline" },

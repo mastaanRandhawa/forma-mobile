@@ -511,6 +511,8 @@ export const api = {
     claimQuest: (id: string, checkinsEnabled: boolean) => post<{ coins: number; state: T.RewardsState }>(`/rewards/quests/${id}/claim`, { checkinsEnabled }),
     buyShield: (checkinsEnabled: boolean) => post<T.RewardsState>("/rewards/shields", { checkinsEnabled }),
     pledge: (stake: number, checkinsEnabled: boolean) => post<T.RewardsState>("/rewards/pledge", { stake, checkinsEnabled }),
+    appPass: () => get<T.AppPassState>("/rewards/app-pass"),
+    buyAppPass: (minutes: number, requestId: string) => post<T.AppPassState>("/rewards/app-pass", { minutes, requestId }),
   },
 
   // store

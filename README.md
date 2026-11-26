@@ -26,6 +26,12 @@ trainer chat + insights, nutrition (food log, search, barcode, goals), notificat
 (training, coaching, connections, notifications, appearance, customization, privacy, account, security),
 plus the theme engine (10 themes, accents, light/dark/system).
 
+## App lock (Android)
+
+More → App lock covers the social apps you pick until you spend coins on a timed pass. Native code is in
+`modules/app-lock`, so it needs a new build (not Expo Go) and a backend with `/rewards/app-pass`.
+It needs "Usage access" and "Display over other apps". Google Play reviews both closely.
+
 Not yet ported: camera form tracking, voice chat, progress photos, programs (week schedule) UI, Apple Health /
 Health Connect sync (needs a dev build + `forma/mobile` health code), ambient theme effects (particles, scanlines),
 the anatomical SVG body map (a schematic diagram is used), Apple/Google social sign-in, motion polish.

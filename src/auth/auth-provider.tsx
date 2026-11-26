@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { auth as authClient, session as tokenStore } from "@/api/client";
 import { invalidateResource } from "@/api/hooks";
 import type { User } from "@/api/types";
+import { appLock } from "@/lib/app-lock";
 
 export type AuthStatus = "loading" | "authed" | "unverified" | "anon";
 
@@ -15,6 +16,16 @@ interface AuthValue {
 }
 
 const Ctx = createContext<AuthValue | null>(null);
+
+/**
+ * Passes can't be bought signed out, so don't leave apps locked behind a login.
+ * Called only for a deliberate sign-out: a failed session restore (offline, say)
+ * must not switch the lock off.
+ */
+function releaseAppLock() {
+  appLock?.setEnabled(false);
+  appLock?.setUnlockedFor(0);
+}
 
 const statusFor = (u: User | null): AuthStatus => (!u ? "anon" : u.emailVerified ? "authed" : "unverified");
 
@@ -69,6 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       /* already gone server-side */
     }
     tokenStore.clear();
+    releaseAppLock();
     setUser(null);
   }, [setUser]);
 
@@ -79,6 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       /* ignore */
     }
     tokenStore.clear();
+    releaseAppLock();
     setUser(null);
   }, [setUser]);
 

@@ -1217,3 +1217,12 @@ export interface Dashboard {
   formAvailable?: "live" | "unavailable" | "computed";
   volumeSource?: "computed" | "unavailable";
 }
+
+/** Timed passes that open the apps locked on this device (GET /rewards/app-pass). */
+export interface AppPassState {
+  balance: number;
+  /** when the running pass ends, or null */
+  expiresAt: string | null;
+  serverNow: string;
+  options: { minutes: number; price: number }[];
+}
