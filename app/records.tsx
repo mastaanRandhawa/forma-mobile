@@ -20,6 +20,7 @@ import { ProgressBar } from "@/components/ui/controls";
 import { EmptyState, ErrorState, PageHeader, PillTabs, Skel, Sparkline } from "@/components/ui/extra";
 import { SoftSurface } from "@/components/ui/surface";
 import { Label, Num, Text } from "@/components/ui/text";
+import { Quiet } from "@/components/quiet";
 
 type Lift = { slug: string; name: string; e1rm: PersonalRecord | null; weight: PersonalRecord | null; reps: PersonalRecord | null; latest: string };
 
@@ -70,7 +71,7 @@ export default function Records() {
             <EmptyState title="No records yet" body="Finish your first workout and log some sets — your all-time bests appear here." />
           ) : (
             <>
-              {shown.map((l, i) => <LiftCard key={l.slug} lift={l} units={units} top={i === 0 && !q} onPress={() => setOpen(l.slug)} />)}
+              {shown.map((l, i) => <Quiet key={l.slug} widgetKey="records-lifts"><LiftCard lift={l} units={units} top={i === 0 && !q} onPress={() => setOpen(l.slug)} /></Quiet>)}
               {!shown.length ? <Text color="tertiary" style={{ textAlign: "center" }}>No lifts match "{q}".</Text> : null}
             </>
           )}

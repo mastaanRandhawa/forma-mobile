@@ -12,6 +12,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Reanimated, { Easing, FadeIn, FadeOut, LinearTransition, useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
 import { api } from "@/api/client";
 import { errorMessage, invalidateResource } from "@/api/hooks";
 import { useAuth } from "@/auth/auth-provider";
@@ -38,7 +39,7 @@ import {
   type ActiveUI,
   type SetRow,
 } from "@/lib/active-session";
-import { trainerCue, type CueContext, type CueEvent } from "@/lib/cues";
+import { trainerCue } from "@/lib/cues";
 import { plateCombo, plateLabel } from "@/lib/plates";
 import { cancelRestAlert, scheduleRestAlert } from "@/lib/reminders";
 import { setDevicePrefs, useDevicePrefs } from "@/lib/device-prefs";
@@ -54,6 +55,8 @@ import { KaiOrb } from "@/components/ui/kai-orb";
 import { PressScale } from "@/components/ui/pressable";
 import { toast } from "@/components/ui/toast";
 import { Label, Num, Text } from "@/components/ui/text";
+import { EASE_LUXURY } from "@/lib/ease";
+import { motion } from "@/lib/motion";
 
 const COMPOUND_REST = 120;
 const ISOLATION_REST = 75;
@@ -97,7 +100,6 @@ export default function ActiveWorkout() {
   const ui = useActiveUI(session?.id);
   const [now, setNow] = useState(Date.now());
   const [history, setHistory] = useState<Record<string, ExerciseHistory | null>>({});
-  const [cue, setCue] = useState<{ event: CueEvent; ctx: CueContext }>({ event: "start", ctx: {} });
   const [milestone, setMilestone] = useState<{ kind: "pr" | "exercise"; title: string; detail?: string } | null>(null);
   const [sheet, setSheet] = useState<null | "overview" | "end" | "add" | "swap" | "howto" | "swapLibrary" | "menu">(null);
   const [swapFor, setSwapFor] = useState<ExercisePerformance | null>(null);
@@ -181,7 +183,6 @@ export default function ActiveWorkout() {
       patchUI((c) => ({ ...c, restEndsAt: null }));
       Vibration.vibrate([0, 180, 90, 180]);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      setCue({ event: "rest-over", ctx: {} });
     }
   }, [ui.restEndsAt, restLeft, patchUI]);
 
@@ -199,13 +200,6 @@ export default function ActiveWorkout() {
     setHistory((h) => ({ ...h, [slug]: null }));
     api.library.exerciseHistory(slug, 3).then((r) => setHistory((h) => ({ ...h, [slug]: r }))).catch(() => {});
   }, [current?.exercise.slug, history]);
-
-  // start cue once the session is known
-  useEffect(() => {
-    if (session && cue.event === "start" && cue.ctx.totalExercises === undefined) {
-      setCue({ event: "start", ctx: { totalExercises: session.performances.filter((p) => !ui.skipped.includes(p.id)).length, exerciseName: current?.exercise.name } });
-    }
-  }, [session, cue, ui.skipped, current]);
 
   // ── mutations ────────────────────────────────────────────────────────────
   const replacePerf = (perf: ExercisePerformance) => setSession((s) => (s ? { ...s, performances: s.performances.map((p) => (p.id === perf.id ? perf : p)) } : s));
@@ -335,13 +329,10 @@ export default function ActiveWorkout() {
       if (nextEmpty && !row.warmup) patchUI((c) => ({ ...c, drafts: { ...c.drafts, [setKey(fresh.id, nextEmpty.n)]: { weightKg: row.weightKg, reps: row.reps, rpe: null } } }));
       const nextSession = { ...session, performances: session.performances.map((p) => (p.id === fresh.id ? fresh : p)) };
       const doneNow = exerciseComplete(fresh, ui);
-      let hadPr = false;
       if (doneNow && !row.warmup) {
         const pr = findPR(fresh);
         if (pr) {
-          hadPr = true;
           setMilestone({ kind: "pr", title: "New personal record", detail: pr });
-          setCue({ event: "pr", ctx: { prDetail: pr.split("— ")[1] } });
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
         } else {
           setMilestone({ kind: "exercise", title: `${fresh.exercise.name} complete`, detail: `${workingRows(fresh, ui).filter((r) => r.done).length} sets` });
@@ -358,11 +349,7 @@ export default function ActiveWorkout() {
           const cand = peers[(idx + k) % peers.length];
           if (activeRow(cand, ui) && !exerciseComplete(cand, ui)) {
             patchUI((c) => ({ ...c, cursor: cand.id }));
-            if ((idx + k) % peers.length <= idx) {
-              const sec = adaptiveRest(fresh.exercise.mechanic, lastRpe);
-              startRest(sec);
-              setCue({ event: "rest", ctx: { restSeconds: sec } });
-            } else setCue({ event: "superset-next", ctx: { exerciseName: cand.exercise.name } });
+            if ((idx + k) % peers.length <= idx) startRest(adaptiveRest(fresh.exercise.mechanic, lastRpe));
             return;
           }
         }
@@ -370,8 +357,6 @@ export default function ActiveWorkout() {
 
       if (doneNow) {
         const nextId = nextFocus(nextSession, getActiveUI(session.id), fresh.id);
-        const left = nextSession.performances.filter((p) => !ui.skipped.includes(p.id) && !exerciseComplete(p, ui)).length;
-        if (!hadPr) setCue({ event: left <= 0 ? "finish" : left === 1 ? "almost-done" : "exercise-done", ctx: { exercisesLeft: left, exerciseName: fresh.exercise.name } });
         if (!nextId) {
           setTimeout(() => setSheet("end"), 900);
           return;
@@ -379,9 +364,7 @@ export default function ActiveWorkout() {
         patchUI((c) => ({ ...c, cursor: nextId }));
         startRest(DEFAULT_REST);
       } else {
-        const sec = adaptiveRest(fresh.exercise.mechanic, lastRpe);
-        startRest(sec);
-        setCue({ event: "rest", ctx: { restSeconds: sec, setsLeftInExercise: workingRows(fresh, ui).filter((r) => !r.done).length } });
+        startRest(adaptiveRest(fresh.exercise.mechanic, lastRpe));
       }
     } catch (e) {
       toast.error(errorMessage(e as Error));
@@ -425,7 +408,6 @@ export default function ActiveWorkout() {
         planned: { ...c.planned, [next.id]: remaining },
         targets: { ...c.targets, [next.id]: c.targets[perf.id] ?? "3 × 8–12" },
       }));
-      setCue({ event: "substituted", ctx: { exerciseName: name } });
     } catch (e) {
       toast.error(errorMessage(e as Error));
     }
@@ -446,7 +428,6 @@ export default function ActiveWorkout() {
       const next = { ...c, deferred: { ...c.deferred, [perf.id]: reason } };
       return { ...next, cursor: nextFocus(session, next, perf.id) ?? perf.id };
     });
-    setCue({ event: "deferred", ctx: { exerciseName: perf.exercise.name } });
     setSheet(null);
   };
   const resume = (perf: ExercisePerformance) => {
@@ -455,7 +436,6 @@ export default function ActiveWorkout() {
       delete deferred[perf.id];
       return { ...c, deferred, cursor: perf.id };
     });
-    setCue({ event: "resumed", ctx: { exerciseName: perf.exercise.name } });
     setSheet(null);
   };
   const setSkip = (perf: ExercisePerformance, skip: boolean) => {
@@ -566,8 +546,8 @@ export default function ActiveWorkout() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <Atmosphere />
-      {/* HUD — compact: leave · title + progress · pause · more */}
-      <View style={{ paddingTop: insets.top + 4, paddingHorizontal: 16, paddingBottom: 8, gap: 10 }}>
+      {/* HUD — leave · title + progress · pause · more, over one smooth progress line */}
+      <View style={{ paddingTop: insets.top + 4, paddingHorizontal: 16, paddingBottom: 10, gap: 12 }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
           <HudButton icon="chevron-down" label="Leave workout" onPress={() => setSheet("end")} />
           <View style={{ flex: 1, alignItems: "center" }}>
@@ -581,16 +561,10 @@ export default function ActiveWorkout() {
           <HudButton icon={ui.paused ? "play" : "pause"} label={ui.paused ? "Resume workout" : "Pause workout"} onPress={togglePause} active={ui.paused} />
           <HudButton icon="ellipsis-horizontal" label="Workout options" onPress={() => setSheet("menu")} />
         </View>
-        <View style={{ flexDirection: "row", gap: 4 }}>
-          {trainable.map((p) => {
-            const ph = phaseOf(p, ui);
-            const c = ph === "done" ? colors.lime : p.id === ui.cursor ? colors.pink : ph === "deferred" ? colors.amber : "rgba(255,255,255,0.14)";
-            return <Pressable key={p.id} onPress={() => focus(p.id)} hitSlop={{ top: 12, bottom: 12 }} accessibilityLabel={`Go to ${p.exercise.name}`} style={{ flex: 1, height: 5, borderRadius: 3, backgroundColor: c }} />;
-          })}
-        </View>
+        <ProgressLine frac={prog.setsTotal ? prog.setsDone / prog.setsTotal : 0} />
       </View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24, gap: 16 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24, gap: 20 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         {ui.paused ? (
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: 14, borderRadius: radius.medium, backgroundColor: "rgba(255,182,97,0.12)", borderWidth: 1, borderColor: "rgba(255,182,97,0.3)" }}>
             <Text style={{ color: colors.amber }}>Workout paused · timer stopped</Text>
@@ -609,23 +583,19 @@ export default function ActiveWorkout() {
         ) : null}
 
         {current ? (
-          <FocusCard
-            perf={current}
-            ui={ui}
-            units={units}
-            step={step}
-            position={trainable.findIndex((p) => p.id === current.id) + 1}
-            total={trainable.length}
-            superset={current.supersetGroup != null ? `Superset ${supersetLetter(current.supersetGroup)} · ${supersetPeers(session, current).findIndex((p) => p.id === current.id) + 1}/${supersetPeers(session, current).length}` : null}
-            history={history[current.exercise.slug] ?? null}
-            cue={trainerCue(cue.event, cue.ctx)}
-            look={look}
-            onPatch={(row, p) => patchDraft(current, row, p)}
-            onAmrap={(row) => patchUI((c) => ({ ...c, amrap: row.amrap ? c.amrap.filter((k) => k !== setKey(current.id, row.n)) : [...c.amrap, setKey(current.id, row.n)] }))}
-            opts={setOpts}
-            onCloseOpts={() => setSetOpts(false)}
-            onAddSet={(w) => addSet(current, w)}
-          />
+          <Reanimated.View key={current.id} entering={FadeIn.duration(260)} exiting={FadeOut.duration(120)}>
+            <FocusCard
+                perf={current}
+                ui={ui}
+                units={units}
+                step={step}
+                position={trainable.findIndex((p) => p.id === current.id) + 1}
+                total={trainable.length}
+                superset={current.supersetGroup != null ? `Superset ${supersetLetter(current.supersetGroup)} · ${supersetPeers(session, current).findIndex((p) => p.id === current.id) + 1}/${supersetPeers(session, current).length}` : null}
+                history={history[current.exercise.slug] ?? null}
+                onPatch={(row, p) => patchDraft(current, row, p)}
+              />
+          </Reanimated.View>
         ) : session.performances.length ? (
           <View style={{ padding: 20, borderRadius: radius.large, backgroundColor: colors.surface, gap: 10, alignItems: "center" }}>
             <Ionicons name="checkmark-done-circle" size={36} color={colors.lime} />
@@ -645,6 +615,7 @@ export default function ActiveWorkout() {
       {/* bottom dock — the one thing to do next, in thumb reach */}
       {current ? (
         <View style={{ paddingHorizontal: 16, paddingTop: 12, paddingBottom: insets.bottom + 12, backgroundColor: colors.surfaceOpaque, borderTopWidth: 1, borderTopColor: colors.lineSoft }}>
+          <Reanimated.View key={resting ? "rest" : "set"} entering={FadeIn.duration(200)}>
           {resting ? (
             <RestDock
               left={restLeft}
@@ -670,6 +641,7 @@ export default function ActiveWorkout() {
               />
             </View>
           )}
+          </Reanimated.View>
         </View>
       ) : null}
 
@@ -717,6 +689,20 @@ export default function ActiveWorkout() {
         <Button label="Add exercise" variant="ghost" icon={<Ionicons name="add" size={18} color={colors.onColor} />} onPress={() => setSheet("add")} />
         <Text variant="meta" color="tertiary">Changes apply to today's session only — your saved plan isn't touched.</Text>
       </Sheet>
+
+            {(() => {
+        const r = current ? activeRow(current, ui) : null;
+        if (!current || !r) return null;
+        return (
+          <Sheet visible={setOpts} onClose={() => setSetOpts(false)} title="Set options" eyebrow={current.exercise.name}>
+            <Stepper label="rpe (effort 1–10)" value={r.rpe} step={0.5} max={10} onChange={(v) => patchDraft(current, r, { rpe: v })} />
+            <SettingRow icon="add-circle-outline" title="Add a set" onPress={() => { setSetOpts(false); addSet(current, false); }} />
+            <SettingRow icon="flame-outline" title="Add a warm-up set" onPress={() => { setSetOpts(false); addSet(current, true); }} />
+            <SettingRow icon="flame" title={r.warmup ? "This is a working set" : "Mark this as a warm-up"} onPress={() => { setSetOpts(false); patchDraft(current, r, { warmup: !r.warmup }); }} />
+            <SettingRow icon="infinite" title={r.amrap ? "Unmark AMRAP" : "AMRAP — as many reps as possible"} onPress={() => { setSetOpts(false); patchUI((c) => ({ ...c, amrap: r.amrap ? c.amrap.filter((k) => k !== setKey(current.id, r.n)) : [...c.amrap, setKey(current.id, r.n)] })); }} />
+          </Sheet>
+        );
+      })()}
 
       <ExercisePicker visible={sheet === "add"} onClose={() => setSheet(null)} onPick={addExercise} />
       <ExercisePicker visible={sheet === "swapLibrary"} title="Replace from library" onClose={() => setSheet(null)} onPick={(e) => { if (!swapFor) return; const target = swapFor; ask("Replace exercise?", `${target.exercise.name} will be replaced by ${e.name} for today only.`, "Replace", () => void swapTo(target, e.id, e.name)); }} />
@@ -774,13 +760,7 @@ function FocusCard(props: {
   total: number;
   superset: string | null;
   history: ExerciseHistory | null;
-  cue: string;
-  look?: string;
   onPatch: (row: SetRow, p: Partial<{ weightKg: number | null; reps: number | null; rpe: number | null; warmup: boolean }>) => void;
-  onAmrap: (row: SetRow) => void;
-  opts: boolean;
-  onCloseOpts: () => void;
-  onAddSet: (warmup: boolean) => void;
 }) {
   const { perf, ui, units } = props;
   const u = unitLabel(units);
@@ -794,21 +774,13 @@ function FocusCard(props: {
   const [frame, setFrame] = useState(0);
   useEffect(() => {
     if (frames.length < 2) return;
-    const t = setInterval(() => setFrame((f) => (f ? 0 : 1)), 800);
+    const t = setInterval(() => setFrame((f) => (f ? 0 : 1)), 900);
     return () => clearInterval(t);
   }, [frames.length]);
-  const last = props.history?.history[0];
-  const lastSets = last?.sets.filter((s) => s.weightKg != null || s.reps != null) ?? [];
-  const rxW = perf.prescribedWeightKg ?? null;
-  const rxR = perf.prescribedReps ?? null;
-  const bestE = lastSets.length ? Math.max(...lastSets.map((s) => epley1RM(s.weightKg ?? 0, s.reps ?? 0))) : 0;
-  const pct = rxW && bestE ? Math.round((rxW / bestE) * 100) : null;
+  const lastSets = props.history?.history[0]?.sets.filter((s) => s.weightKg != null || s.reps != null) ?? [];
   const bodyweight = !!perf.exercise.isBodyweight;
   const wDisp = row?.weightKg != null ? fromKg(row.weightKg, units) : null;
   const plates = wDisp != null && !bodyweight ? plateCombo(wDisp, units === "metric" ? 20 : 45, u) : null;
-  const { opts } = props;
-  const setOpts = (v: boolean) => !v && props.onCloseOpts();
-  const note = (perf.prescriptionAudit?.output as { note?: string } | undefined)?.note;
 
   const fillPrevious = () => {
     if (!row || !lastSets.length) return;
@@ -818,37 +790,33 @@ function FocusCard(props: {
   };
 
   if (!row) return null;
+  const tags = [row.rpe != null ? `RPE ${row.rpe}` : null, row.amrap ? "AMRAP" : null].filter(Boolean).join(" · ");
   return (
-    <View>
+    <View style={{ gap: 20 }}>
       {frames.length ? (
-        <View style={{ height: 190, marginHorizontal: -16, backgroundColor: "#fff" }}>
+        <View style={{ height: 160, borderRadius: radius.large, overflow: "hidden", backgroundColor: "#fff" }}>
           <Image source={{ uri: frames[frame % frames.length] }} style={{ flex: 1 }} resizeMode="contain" accessibilityLabel={`${perf.exercise.name} demonstration`} />
         </View>
       ) : null}
-      <View style={{ paddingTop: 16, gap: 18 }}>
-        <View style={{ gap: 4 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            {props.superset ? <View style={{ paddingHorizontal: 8, height: 22, borderRadius: 11, justifyContent: "center", backgroundColor: "rgba(179,101,150,0.25)" }}><Text variant="meta" style={{ color: colors.pinkSoft }}>{props.superset}</Text></View> : null}
-            <Label>EXERCISE {props.position}/{props.total}{ui.swappedFrom[perf.id] ? ` · SWAPPED FROM ${ui.swappedFrom[perf.id].toUpperCase()}` : ""}</Label>
-          </View>
-          <Text style={{ fontFamily: fonts.light, fontSize: 30, lineHeight: 34, letterSpacing: -0.6 }}>{perf.exercise.name}</Text>
-          <View style={{ flexDirection: "row", alignItems: "baseline", gap: 6 }}>
-            {row.warmup ? <Text style={{ fontFamily: fonts.semibold, color: colors.cyan }}>Warm-up set</Text> : <><Num size={26} style={{ color: colors.pink }}>{doneW + 1}</Num><Text color="tertiary">/ {working.length} sets · {ui.targets[perf.id] ?? "3 × 8–12"}</Text></>}
-          </View>
+
+      <View style={{ gap: 6 }}>
+        <Label>
+          {props.superset ? `${props.superset.toUpperCase()} · ` : ""}EXERCISE {props.position} OF {props.total}{ui.swappedFrom[perf.id] ? ` · SWAPPED FROM ${ui.swappedFrom[perf.id].toUpperCase()}` : ""}
+        </Label>
+        <Text style={{ fontFamily: fonts.light, fontSize: 30, lineHeight: 34, letterSpacing: -0.6 }}>{perf.exercise.name}</Text>
+        <View style={{ flexDirection: "row", alignItems: "baseline", gap: 6 }}>
+          {row.warmup ? (
+            <Text style={{ fontFamily: fonts.semibold, color: colors.cyan }}>Warm-up set</Text>
+          ) : (
+            <>
+              <Num size={22} style={{ color: colors.pink }}>{doneW + 1}</Num>
+              <Text color="tertiary">of {working.length} sets · {ui.targets[perf.id] ?? "3 × 8–12"}{tags ? ` · ${tags}` : ""}</Text>
+            </>
+          )}
         </View>
+      </View>
 
-        {lastSets.length ? (
-          <Pressable onPress={fillPrevious} accessibilityHint="Fills the set with your last top set" style={{ flexDirection: "row", alignItems: "center", gap: 8, minHeight: 44 }}>
-            <Ionicons name="time-outline" size={16} color={colors.textTertiary} />
-            <Text variant="meta" color="secondary" numberOfLines={1} style={{ flex: 1 }}>
-              Last time {lastSets.slice(0, 3).map((s) => `${s.weightKg != null ? fromKg(s.weightKg, units) : "BW"}×${s.reps ?? "—"}`).join("  ")}
-            </Text>
-            <Text variant="meta" color="pink">Use</Text>
-          </Pressable>
-        ) : (
-          <Text variant="meta" color="tertiary">{props.history ? "First time — nothing to compare yet" : " "}</Text>
-        )}
-
+      <View style={{ gap: 14 }}>
         {!bodyweight ? (
           <View style={{ flexDirection: "row" }}>
             <Stepper large label="weight" suffix={u} value={wDisp} step={props.step} max={2000} onChange={(v) => props.onPatch(row, { weightKg: v == null ? null : toKg(v, units) })} />
@@ -857,32 +825,35 @@ function FocusCard(props: {
         <View style={{ flexDirection: "row" }}>
           <Stepper large label={row.amrap ? "reps · amrap" : "reps"} value={row.reps} step={1} max={200} onChange={(v) => props.onPatch(row, { reps: v == null ? null : Math.round(v) })} placeholder={row.amrap ? "max" : "—"} />
         </View>
-
-        {plates && plates.perSide.length ? (
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <Ionicons name="disc-outline" size={14} color={colors.textTertiary} />
-            <Text variant="meta" color="tertiary">Plates / side</Text>
-            <Text style={{ fontFamily: fonts.num, fontSize: 13 }}>{plateLabel(plates.perSide)}</Text>
-            {plates.loaded !== wDisp ? <Text variant="meta" color="tertiary">→ loads {plates.loaded} {u}</Text> : null}
-          </View>
-        ) : null}
-
-        {row.rpe != null || row.amrap || row.warmup ? (
-          <Text variant="meta" color="secondary" style={{ textAlign: "center" }}>{[row.rpe != null ? `RPE ${row.rpe}` : null, row.amrap ? "AMRAP" : null, row.warmup ? "Warm-up" : null].filter(Boolean).join(" · ")}</Text>
-        ) : null}
-
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingTop: 4 }}>
-          <KaiOrb size={26} look={props.look} />
-          <Text color="secondary" style={{ flex: 1, fontStyle: "italic" }}>{props.cue}</Text>
-        </View>
       </View>
-      <Sheet visible={opts} onClose={() => setOpts(false)} title="Set options" eyebrow={perf.exercise.name}>
-        <Stepper label="rpe (effort 1–10)" value={row.rpe} step={0.5} max={10} onChange={(v) => props.onPatch(row, { rpe: v })} />
-        <SettingRow icon="add-circle-outline" title="Add a set" onPress={() => { setOpts(false); props.onAddSet(false); }} />
-        <SettingRow icon="flame-outline" title="Add a warm-up set" onPress={() => { setOpts(false); props.onAddSet(true); }} />
-        <SettingRow icon="flame" title={row.warmup ? "This is a working set" : "Mark this as a warm-up"} onPress={() => { setOpts(false); props.onPatch(row, { warmup: !row.warmup }); }} />
-        <SettingRow icon="infinite" title={row.amrap ? "Unmark AMRAP" : "AMRAP — as many reps as possible"} onPress={() => { setOpts(false); props.onAmrap(row); }} />
-      </Sheet>
+
+      {lastSets.length ? (
+        <Pressable onPress={fillPrevious} accessibilityHint="Fills the set with your last top set" style={{ flexDirection: "row", alignItems: "center", gap: 8, minHeight: 40 }}>
+          <Ionicons name="time-outline" size={16} color={colors.textTertiary} />
+          <Text variant="meta" color="secondary" numberOfLines={1} style={{ flex: 1 }}>
+            Last time {lastSets.slice(0, 3).map((s) => `${s.weightKg != null ? fromKg(s.weightKg, units) : "BW"}×${s.reps ?? "—"}`).join("  ")}
+          </Text>
+          <Text variant="meta" color="pink">Use</Text>
+        </Pressable>
+      ) : null}
+
+      {plates && plates.perSide.length ? (
+        <Text variant="meta" color="tertiary">Plates per side · {plateLabel(plates.perSide)}{plates.loaded !== wDisp ? ` → loads ${plates.loaded} ${u}` : ""}</Text>
+      ) : null}
+    </View>
+  );
+}
+
+/** One slim progress line for the whole session; the fill glides instead of jumping. */
+function ProgressLine({ frac }: { frac: number }) {
+  const w = useSharedValue(frac);
+  useEffect(() => {
+    w.set(withTiming(frac, { duration: motion.reduced ? 0 : 450, easing: EASE_LUXURY }));
+  }, [frac, w]);
+  const fill = useAnimatedStyle(() => ({ width: `${Math.max(0, Math.min(1, w.get())) * 100}%` }));
+  return (
+    <View style={{ height: 4, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.1)", overflow: "hidden" }}>
+      <Reanimated.View style={[{ height: 4, borderRadius: 2, backgroundColor: colors.pink }, fill]} />
     </View>
   );
 }
@@ -933,7 +904,7 @@ function RestDock({ left, total, showCount, onToggleCount, onAdjust, onSkip, onP
           {reveal ? <Num size={20} style={{ color: low ? colors.amber : colors.textPrimary }}>{fmtClock(left)}</Num> : <Ionicons name="eye-outline" size={18} color={colors.textTertiary} />}
         </View>
         <View style={{ height: 6, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
-          <View style={{ width: `${frac * 100}%`, height: 6, borderRadius: 3, backgroundColor: low ? colors.amber : colors.lime }} />
+          <RestFill frac={frac} color={low ? colors.amber : colors.lime} />
         </View>
       </Pressable>
       <View style={{ flexDirection: "row", gap: 8 }}>
@@ -946,36 +917,45 @@ function RestDock({ left, total, showCount, onToggleCount, onAdjust, onSkip, onP
   );
 }
 
-function SetList({ perf, ui, units, history, onToggle, onDelete }: { perf: ExercisePerformance; ui: ActiveUI; units: Units; history: ExerciseHistory | null; onToggle: (r: SetRow) => void; onDelete: (r: SetRow) => void }) {
+function RestFill({ frac, color }: { frac: number; color: string }) {
+  const w = useSharedValue(frac);
+  useEffect(() => {
+    w.set(withTiming(frac, { duration: 300, easing: Easing.linear }));
+  }, [frac, w]);
+  const style = useAnimatedStyle(() => ({ width: `${w.get() * 100}%` }));
+  return <Reanimated.View style={[{ height: 6, borderRadius: 3, backgroundColor: color }, style]} />;
+}
+
+function SetList({ perf, ui, units, onToggle, onDelete }: { perf: ExercisePerformance; ui: ActiveUI; units: Units; history: ExerciseHistory | null; onToggle: (r: SetRow) => void; onDelete: (r: SetRow) => void }) {
   const u = unitLabel(units);
   const rows = setRows(perf, ui);
-  const lastSets = history?.history[0]?.sets ?? [];
   let wi = 0;
   return (
     <View style={{ gap: 6 }}>
       <Label style={{ marginLeft: 4 }}>SETS</Label>
       {rows.map((r) => {
         const idx = r.warmup ? -1 : wi++;
-        const prev = idx >= 0 ? lastSets[idx] : undefined;
         return (
-          <View key={r.n} style={{ paddingVertical: 10, paddingLeft: 14, paddingRight: 8, borderRadius: radius.small, backgroundColor: r.done ? "rgba(216,255,99,0.08)" : colors.surface, gap: 2 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-              <Text style={{ width: 34, fontFamily: fonts.num, color: r.warmup ? colors.cyan : colors.textTertiary }}>{r.warmup ? "W/U" : `#${idx + 1}`}</Text>
-              <Text style={{ flex: 1, fontFamily: fonts.num, fontSize: 17 }}>
+          <Reanimated.View key={r.n} layout={LinearTransition.duration(240)} entering={FadeIn.duration(220)} exiting={FadeOut.duration(140)}>
+            <Pressable
+              onLongPress={() => onDelete(r)}
+              delayLongPress={450}
+              accessibilityHint="Hold to delete this set"
+              style={{ flexDirection: "row", alignItems: "center", gap: 12, minHeight: 52, paddingLeft: 14, paddingRight: 6, borderRadius: radius.small, backgroundColor: r.done ? "rgba(216,255,99,0.08)" : colors.surface }}
+            >
+              <Text style={{ width: 30, fontFamily: fonts.num, color: r.warmup ? colors.cyan : colors.textTertiary }}>{r.warmup ? "W" : idx + 1}</Text>
+              <Text style={{ flex: 1, fontFamily: fonts.num, fontSize: 16, opacity: r.done ? 0.9 : 0.75 }}>
                 {r.weightKg != null ? `${fromKg(r.weightKg, units)} ${u}` : "—"} × {r.amrap && r.reps == null ? "AMRAP" : r.reps ?? "—"}
                 {r.rpe != null ? ` @ ${r.rpe}` : ""}
               </Text>
-              <Pressable onPress={() => onToggle(r)} hitSlop={6} accessibilityLabel={r.done ? "Mark set not done" : "Mark set done"} style={{ width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center", backgroundColor: r.done ? colors.lime : "rgba(255,255,255,0.08)" }}>
-                <Ionicons name="checkmark" size={22} color={r.done ? "#1a1a1a" : colors.textTertiary} />
+              <Pressable onPress={() => onToggle(r)} hitSlop={4} accessibilityLabel={r.done ? "Mark set not done" : "Mark set done"} style={{ width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: r.done ? colors.lime : "rgba(255,255,255,0.08)" }}>
+                <Ionicons name="checkmark" size={20} color={r.done ? "#1a1a1a" : colors.textTertiary} />
               </Pressable>
-              <Pressable onPress={() => onDelete(r)} hitSlop={6} accessibilityLabel="Delete set" style={{ width: 44, height: 48, alignItems: "center", justifyContent: "center" }}>
-                <Ionicons name="close" size={20} color={colors.textTertiary} />
-              </Pressable>
-            </View>
-            {prev && !r.done ? <Text variant="meta" color="tertiary" style={{ marginLeft: 44, marginTop: -4 }}>Last time: {prev.weightKg != null ? fromKg(prev.weightKg, units) : "BW"} {u} × {prev.reps ?? "—"}</Text> : null}
-          </View>
+            </Pressable>
+          </Reanimated.View>
         );
       })}
+      <Text variant="meta" color="tertiary" style={{ marginLeft: 4 }}>Hold a set to delete it</Text>
     </View>
   );
 }
