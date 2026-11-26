@@ -1,0 +1,36 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:tools="http://schemas.android.com/tools">
+
+  <!-- which app is on screen (the user grants this in system settings) -->
+  <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
+  <!-- drawing the lock screen over a locked app -->
+  <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+  <!-- only these apps are visible to us; avoids QUERY_ALL_PACKAGES. Keep in step with SOCIAL_APPS. -->
+  <queries>
+    <package android:name="com.instagram.android com.instagram.barcelona com.zhiliaoapp.musically com.ss.android.ugc.trill com.snapchat.android com.facebook.katana com.facebook.lite com.twitter.android com.reddit.frontpage com.google.android.youtube com.pinterest com.discord com.bereal.ft tv.twitch.android.app com.tumblr" />
+  </queries>
+
+  <application>
+    <service
+      android:name="expo.modules.applock.AppLockService"
+      android:exported="false"
+      android:foregroundServiceType="specialUse">
+      <property
+        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="Locks apps the user chose, until they spend earned time to open them" />
+    </service>
+    <receiver
+      android:name="expo.modules.applock.BootReceiver"
+      android:exported="false">
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+      </intent-filter>
+    </receiver>
+  </application>
+</manifest>
