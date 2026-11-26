@@ -477,7 +477,7 @@ export default function Workouts() {
             ) : null}
             {detail.trainerComment ? <View style={{ padding: 12, borderRadius: radius.small, backgroundColor: colors.surface, gap: 4 }}><Label>FROM YOUR TRAINER</Label><Text color="secondary">{detail.trainerComment}</Text></View> : null}
             {detail.performances.map((p) => {
-              const done = p.sets.filter((s) => s.completedAt);
+              const done = p.sets.filter((s) => s.completedAt).sort((a, b) => a.setNumber - b.setNumber);
               return (
                 <View key={p.id} style={{ gap: 4, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.lineSoft }}>
                   <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
