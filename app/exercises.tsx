@@ -157,7 +157,13 @@ function LibraryView() {
 
 /** Your own exercises: add, edit, delete. They show up in the workout builder and logger. */
 function MineView() {
-  const mine = useResource<Exercise[]>("my-exercises", () => api.library.exercises({ mine: "true", take: 200 }).then((r) => r.items));
+  const mine = useResource<Exercise[]>("my-exercises", async () => {
+    // the server pages at 100 and allows up to 200 of your own
+    const first = await api.library.exercises({ mine: "true", take: 100 });
+    if (first.total <= first.items.length) return first.items;
+    const more = await api.library.exercises({ mine: "true", take: 100, skip: 100 });
+    return [...first.items, ...more.items];
+  });
   const [editing, setEditing] = useState<Exercise | null>(null);
   const [creating, setCreating] = useState(false);
   const items = mine.data ?? [];
