@@ -29,10 +29,12 @@ export function CustomExerciseSheet({ visible, entry, onClose, onSaved }: { visi
   // secondary muscles aren't edited here, but an edit must not drop the ones already set
   const secondary = entry?.muscles?.filter((m) => m.role !== "primary").map((m) => m.muscleGroup.key) ?? [];
   const [steps, setSteps] = useState((entry?.instructions ?? []).join("\n"));
+  const [link, setLink] = useState((entry as { mediaUrl?: string | null } | null)?.mediaUrl ?? "");
   const [busy, setBusy] = useState(false);
 
   const toggle = (list: string[], set: (v: string[]) => void, v: string) => set(list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
-  const valid = name.trim().length >= 2;
+  const linkOk = !link.trim() || /^https:\/\/\S+$/i.test(link.trim());
+  const valid = name.trim().length >= 2 && linkOk;
 
   const body = (): CustomExerciseInput => ({
     name: name.trim(),
@@ -43,6 +45,7 @@ export function CustomExerciseSheet({ visible, entry, onClose, onSaved }: { visi
     instructions: steps.split("\n").map((s) => s.trim()).filter(Boolean).slice(0, 20),
     primaryMuscleKeys: primary,
     secondaryMuscleKeys: secondary.filter((k) => !primary.includes(k)),
+    ...(link.trim() ? { mediaUrl: link.trim() } : entry ? { mediaUrl: null } : {}),
   });
 
   const save = async () => {
@@ -106,6 +109,9 @@ export function CustomExerciseSheet({ visible, entry, onClose, onSaved }: { visi
       {chips(MUSCLES, (v) => primary.includes(v), (v) => toggle(primary, setPrimary, v))}
       <Label>STEPS (ONE PER LINE)</Label>
       <TextInput value={steps} onChangeText={setSteps} multiline placeholder="Optional" placeholderTextColor={colors.textTertiary} style={{ ...input, minHeight: 90, paddingTop: 12, textAlignVertical: "top" }} />
+      <Label>PHOTO OR VIDEO LINK (OPTIONAL)</Label>
+      <TextInput value={link} onChangeText={setLink} autoCapitalize="none" autoCorrect={false} keyboardType="url" placeholder="https://…" placeholderTextColor={colors.textTertiary} style={input} />
+      {!linkOk ? <Text variant="meta" style={{ color: colors.amber }}>Use a link that starts with https://</Text> : null}
       {primary.length === 0 ? <Text variant="meta" color="tertiary">Pick at least one muscle so it counts on your muscle map.</Text> : null}
     </Sheet>
   );
