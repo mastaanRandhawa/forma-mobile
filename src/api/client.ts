@@ -432,6 +432,10 @@ export const api = {
     addMetric: (input: T.ProgressMetricInput) => post<T.ProgressMetric>("/progress/metrics", input),
     measurements: () => get<T.BodyMeasurement[]>("/progress/measurements"),
     addMeasurement: (input: T.BodyMeasurementInput) => post<T.BodyMeasurement>("/progress/measurements", input),
+    /** fix an entry; send null to clear a field */
+    updateMeasurement: (id: string, body: { [K in keyof T.BodyMeasurementInput]: T.BodyMeasurementInput[K] | null }) =>
+      patch<T.BodyMeasurement>(`/progress/measurements/${id}`, body),
+    deleteMeasurement: (id: string) => del<void>(`/progress/measurements/${id}`),
     personalRecords: () => get<T.PersonalRecord[]>("/progress/personal-records"),
     strength: (slug: string, days?: number) => get<T.StrengthSeries>(`/progress/strength/${slug}`, { days }),
     overview: () => get<T.ProgressOverview>("/progress/overview"),
