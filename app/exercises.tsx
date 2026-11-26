@@ -7,7 +7,14 @@
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Pressable, FlatList, Linking, ScrollView, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { ExerciseThumb } from "@/components/exercise";
+import { ExerciseDetailSheet, ExerciseThumb } from "@/components/exercise";
+import { CustomExerciseSheet } from "@/components/custom-exercise";
+import { api } from "@/api/client";
+import { useResource } from "@/api/hooks";
+import type { Exercise } from "@/api/types";
+import { EmptyState, PillTabs } from "@/components/ui/extra";
+import { SkelRows, useGrowingList } from "@/components/ui/loading";
+import { Button } from "@/components/ui/controls";
 import { REPDB_URL, getRepdbCatalog, repdbImage, type RepDbCatalogEntry } from "@/lib/repdb";
 import { useTheme } from "@/theme/theme-provider";
 import { colors, fonts, radius } from "@/theme/tokens";
@@ -32,6 +39,7 @@ export default function ExerciseLibrary() {
   const [muscle, setMuscle] = useState("All");
   const [equipment, setEquipment] = useState("All");
   const [selected, setSelected] = useState<RepDbCatalogEntry | null>(null);
+  const [view, setView] = useState<"browse" | "library" | "mine">("browse");
   const needleRaw = useDeferredValue(q);
 
   const filtered = useMemo(() => {
@@ -46,6 +54,11 @@ export default function ExerciseLibrary() {
   return (
     <Screen scroll={false} contentStyle={{ paddingHorizontal: 0, paddingTop: 0 }}>
       <PageHeader title="Exercises" />
+      <View style={{ paddingHorizontal: 20, paddingBottom: 10 }}>
+        <PillTabs value={view} onChange={setView} options={[{ value: "browse", label: "Browse" }, { value: "library", label: "Full library" }, { value: "mine", label: "Mine" }]} />
+      </View>
+      {view === "library" ? <LibraryView /> : view === "mine" ? <MineView /> : null}
+      {view !== "browse" ? null : <>
       <Pinned>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8, height: 48, borderRadius: radius.small, borderWidth: 1, borderColor: colors.lineSoft, backgroundColor: colors.surface, paddingHorizontal: 14 }}>
           <Ionicons name="search" size={17} color={colors.textTertiary} />
@@ -91,7 +104,86 @@ export default function ExerciseLibrary() {
         }
       />
       <CatalogSheet entry={selected} onClose={() => setSelected(null)} />
+      </>}
     </Screen>
+  );
+}
+
+/** Every exercise the server has (about 1,400), searched online. */
+function LibraryView() {
+  const [q, setQ] = useState("");
+  const [equipment, setEquipment] = useState("All");
+  const needle = useDeferredValue(q.trim());
+  const [slug, setSlug] = useState<string | null>(null);
+  const list = useGrowingList<Exercise>(`library:${needle}:${equipment}`, (take) => api.library.exercises({ q: needle || undefined, equipment: equipment === "All" ? undefined : equipment.toLowerCase(), take }).then((r) => r.items), 40);
+  return (
+    <View style={{ flex: 1 }}>
+      <View style={{ paddingHorizontal: 20, gap: 10, paddingBottom: 8 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, height: 48, borderRadius: radius.small, borderWidth: 1, borderColor: colors.lineSoft, backgroundColor: colors.surface, paddingHorizontal: 14 }}>
+          <Ionicons name="search" size={17} color={colors.textTertiary} />
+          <TextInput value={q} onChangeText={setQ} placeholder="Search the full library" placeholderTextColor={colors.textTertiary} autoCapitalize="none" autoCorrect={false} style={{ flex: 1, color: colors.textPrimary, fontFamily: fonts.regular, fontSize: 16 }} />
+          {q ? <Pressable onPress={() => setQ("")} hitSlop={10} accessibilityLabel="Clear search"><Ionicons name="close-circle" size={18} color={colors.textTertiary} /></Pressable> : null}
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -20 }} contentContainerStyle={{ gap: 8, paddingHorizontal: 20 }} keyboardShouldPersistTaps="handled">
+          {EQUIPMENT.map((m) => <Chip key={m} label={m} active={equipment === m} onPress={() => setEquipment(m)} />)}
+        </ScrollView>
+      </View>
+      {list.initialLoading ? <View style={{ paddingHorizontal: 20 }}><SkelRows count={6} thumb={46} /></View> : (
+        <FlatList
+          data={list.items}
+          keyExtractor={(e) => e.id}
+          keyboardShouldPersistTaps="handled"
+          onEndReached={list.loadMore}
+          onEndReachedThreshold={0.6}
+          contentContainerStyle={{ paddingBottom: 40 }}
+          renderItem={({ item: e }) => (
+            <PressScale onPress={() => setSlug(e.slug)} to={0.985} accessibilityLabel={e.name} style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10, paddingHorizontal: 20, borderBottomWidth: 1, borderBottomColor: colors.lineSoft }}>
+              <ExerciseThumb uri={e.imageStartUrl ?? e.imageEndUrl} name={e.name} size={46} />
+              <View style={{ flex: 1 }}>
+                <Text numberOfLines={1}>{e.name}</Text>
+                <Text variant="meta" color="tertiary" numberOfLines={1}>{[e.bodyPart ?? e.category, e.equipment[0], e.difficulty].filter(Boolean).join(" · ")}</Text>
+              </View>
+              {e.source === "custom" ? <Label>MINE</Label> : null}
+            </PressScale>
+          )}
+          ListEmptyComponent={<Text color="tertiary" style={{ paddingVertical: 24, textAlign: "center" }}>{list.error ? "Couldn't reach the library. Check your connection." : "No exercises match."}</Text>}
+          ListFooterComponent={<ListFooter loading={list.loadingMore} done={!list.hasMore && list.items.length > 40} label={`All ${list.items.length} shown`} />}
+        />
+      )}
+      <ExerciseDetailSheet slug={slug} onClose={() => setSlug(null)} onOpenSlug={setSlug} />
+    </View>
+  );
+}
+
+/** Your own exercises: add, edit, delete. They show up in the workout builder and logger. */
+function MineView() {
+  const mine = useResource<Exercise[]>("my-exercises", () => api.library.exercises({ mine: "true", take: 200 }).then((r) => r.items));
+  const [editing, setEditing] = useState<Exercise | null>(null);
+  const [creating, setCreating] = useState(false);
+  const items = mine.data ?? [];
+  return (
+    <View style={{ flex: 1, paddingHorizontal: 20, gap: 12 }}>
+      <Button label="+ New exercise" variant="accent" onPress={() => setCreating(true)} />
+      {mine.initialLoading ? <SkelRows count={4} thumb={46} /> : items.length === 0 ? (
+        <EmptyState title="No exercises of your own yet" body="Add a movement the library doesn't have. It works in routines and workout logging like any other." action="Add one" onAction={() => setCreating(true)} />
+      ) : (
+        <FlatList
+          data={items}
+          keyExtractor={(e) => e.id}
+          contentContainerStyle={{ paddingBottom: 40 }}
+          renderItem={({ item: e }) => (
+            <PressScale onPress={() => setEditing(e)} to={0.985} accessibilityLabel={`Edit ${e.name}`} style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.lineSoft }}>
+              <View style={{ flex: 1 }}>
+                <Text numberOfLines={1}>{e.name}</Text>
+                <Text variant="meta" color="tertiary" numberOfLines={1}>{[e.category, e.equipment[0], e.difficulty].filter(Boolean).join(" · ")}</Text>
+              </View>
+              <Text variant="meta" color="pink">Edit</Text>
+            </PressScale>
+          )}
+        />
+      )}
+      <CustomExerciseSheet key={editing?.id ?? "new"} visible={creating || !!editing} entry={editing} onClose={() => { setCreating(false); setEditing(null); }} onSaved={() => { setCreating(false); setEditing(null); mine.refetch(); }} />
+    </View>
   );
 }
 
