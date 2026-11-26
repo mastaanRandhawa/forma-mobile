@@ -42,7 +42,9 @@ import {
 import { trainerCue } from "@/lib/cues";
 import { plateCombo, plateLabel } from "@/lib/plates";
 import { cancelRestAlert, scheduleRestAlert } from "@/lib/reminders";
+import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { setDevicePrefs, useDevicePrefs } from "@/lib/device-prefs";
+import { fmtEffort, fromRir, RIR_MAX, toRir } from "@/lib/effort";
 import { fmtClock, fmtDuration, fromKg, repRange, saveSessionAsTemplate, startRepeat, toKg, unitLabel, type Units } from "@/lib/workouts";
 import { useEquippedItem, useTheme } from "@/theme/theme-provider";
 import { colors, fonts, radius } from "@/theme/tokens";
@@ -110,9 +112,18 @@ export default function ActiveWorkout() {
   // timers stay out of sight unless asked for (⋯ menu); rest shows as a bar
   const dp = useDevicePrefs();
   const priorRef = useRef<WorkoutSession[]>([]);
+  const scale = dp.effortScale ?? "rpe";
 
   const id = session?.id ?? null;
   const patchUI = useCallback((fn: (u: ActiveUI) => ActiveUI) => id && updateActiveUI(id, fn), [id]);
+
+  // the screen stays lit between sets (no unlocking mid-workout) and lets go when you finish, pause or leave
+  const awake = !!session && !summary && !ui.paused;
+  useEffect(() => {
+    if (!awake) return;
+    void activateKeepAwakeAsync("forma-workout").catch(() => {});
+    return () => void deactivateKeepAwake("forma-workout").catch(() => {});
+  }, [awake]);
 
   // ── load the in-progress session + plan targets ──────────────────────────
   const load = useCallback(async () => {
@@ -593,6 +604,7 @@ export default function ActiveWorkout() {
                 total={trainable.length}
                 superset={current.supersetGroup != null ? `Superset ${supersetLetter(current.supersetGroup)} · ${supersetPeers(session, current).findIndex((p) => p.id === current.id) + 1}/${supersetPeers(session, current).length}` : null}
                 history={history[current.exercise.slug] ?? null}
+                scale={scale}
                 onPatch={(row, p) => patchDraft(current, row, p)}
               />
           </Reanimated.View>
@@ -608,7 +620,7 @@ export default function ActiveWorkout() {
           </View>
         ) : null}
 
-        {current ? <SetList perf={current} ui={ui} units={units} history={history[current.exercise.slug] ?? null} onToggle={(r) => (r.done ? ask("Undo this set?", "It will be removed from your log; the numbers stay as a draft.", "Undo set", () => toggleRow(current, r)) : toggleRow(current, r))} onDelete={(r) => ask("Delete this set?", `Set ${r.n} will be removed from ${current.exercise.name}.`, "Delete", () => deleteRow(current, r), true)} /> : null}
+        {current ? <SetList perf={current} ui={ui} units={units} scale={scale} history={history[current.exercise.slug] ?? null} onToggle={(r) => (r.done ? ask("Undo this set?", "It will be removed from your log; the numbers stay as a draft.", "Undo set", () => toggleRow(current, r)) : toggleRow(current, r))} onDelete={(r) => ask("Delete this set?", `Set ${r.n} will be removed from ${current.exercise.name}.`, "Delete", () => deleteRow(current, r), true)} /> : null}
 
       </ScrollView>
 
@@ -695,7 +707,15 @@ export default function ActiveWorkout() {
         if (!current || !r) return null;
         return (
           <Sheet visible={setOpts} onClose={() => setSetOpts(false)} title="Set options" eyebrow={current.exercise.name}>
-            <Stepper label="rpe (effort 1–10)" value={r.rpe} step={0.5} max={10} onChange={(v) => patchDraft(current, r, { rpe: v })} />
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <Chip label="RPE" active={scale === "rpe"} onPress={() => setDevicePrefs({ effortScale: "rpe" })} />
+              <Chip label="RIR" active={scale === "rir"} onPress={() => setDevicePrefs({ effortScale: "rir" })} />
+            </View>
+            {scale === "rir" ? (
+              <Stepper label="rir (reps left in the tank, 0–5)" value={r.rpe == null ? null : toRir(r.rpe)} step={1} max={RIR_MAX} onChange={(v) => patchDraft(current, r, { rpe: v == null ? null : fromRir(v) })} />
+            ) : (
+              <Stepper label="rpe (effort 1–10)" value={r.rpe} step={0.5} max={10} onChange={(v) => patchDraft(current, r, { rpe: v })} />
+            )}
             <SettingRow icon="add-circle-outline" title="Add a set" onPress={() => { setSetOpts(false); addSet(current, false); }} />
             <SettingRow icon="flame-outline" title="Add a warm-up set" onPress={() => { setSetOpts(false); addSet(current, true); }} />
             <SettingRow icon="flame" title={r.warmup ? "This is a working set" : "Mark this as a warm-up"} onPress={() => { setSetOpts(false); patchDraft(current, r, { warmup: !r.warmup }); }} />
@@ -760,6 +780,7 @@ function FocusCard(props: {
   total: number;
   superset: string | null;
   history: ExerciseHistory | null;
+  scale: "rpe" | "rir";
   onPatch: (row: SetRow, p: Partial<{ weightKg: number | null; reps: number | null; rpe: number | null; warmup: boolean }>) => void;
 }) {
   const { perf, ui, units } = props;
@@ -790,7 +811,7 @@ function FocusCard(props: {
   };
 
   if (!row) return null;
-  const tags = [row.rpe != null ? `RPE ${row.rpe}` : null, row.amrap ? "AMRAP" : null].filter(Boolean).join(" · ");
+  const tags = [row.rpe != null ? fmtEffort(row.rpe, props.scale) : null, row.amrap ? "AMRAP" : null].filter(Boolean).join(" · ");
   return (
     <View style={{ gap: 20 }}>
       {frames.length ? (
@@ -926,7 +947,7 @@ function RestFill({ frac, color }: { frac: number; color: string }) {
   return <Reanimated.View style={[{ height: 6, borderRadius: 3, backgroundColor: color }, style]} />;
 }
 
-function SetList({ perf, ui, units, onToggle, onDelete }: { perf: ExercisePerformance; ui: ActiveUI; units: Units; history: ExerciseHistory | null; onToggle: (r: SetRow) => void; onDelete: (r: SetRow) => void }) {
+function SetList({ perf, ui, units, scale, onToggle, onDelete }: { perf: ExercisePerformance; ui: ActiveUI; units: Units; scale: "rpe" | "rir"; history: ExerciseHistory | null; onToggle: (r: SetRow) => void; onDelete: (r: SetRow) => void }) {
   const u = unitLabel(units);
   const rows = setRows(perf, ui);
   let wi = 0;
@@ -946,7 +967,7 @@ function SetList({ perf, ui, units, onToggle, onDelete }: { perf: ExercisePerfor
               <Text style={{ width: 30, fontFamily: fonts.num, color: r.warmup ? colors.cyan : colors.textTertiary }}>{r.warmup ? "W" : idx + 1}</Text>
               <Text style={{ flex: 1, fontFamily: fonts.num, fontSize: 16, opacity: r.done ? 0.9 : 0.75 }}>
                 {r.weightKg != null ? `${fromKg(r.weightKg, units)} ${u}` : "—"} × {r.amrap && r.reps == null ? "AMRAP" : r.reps ?? "—"}
-                {r.rpe != null ? ` @ ${r.rpe}` : ""}
+                {r.rpe != null ? ` @ ${scale === "rir" ? `${toRir(r.rpe)} RIR` : r.rpe}` : ""}
               </Text>
               <Pressable onPress={() => onToggle(r)} hitSlop={4} accessibilityLabel={r.done ? "Mark set not done" : "Mark set done"} style={{ width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: r.done ? colors.lime : "rgba(255,255,255,0.08)" }}>
                 <Ionicons name="checkmark" size={20} color={r.done ? "#1a1a1a" : colors.textTertiary} />

@@ -595,12 +595,14 @@ export function Bar({ pct, tone = "pink" }: { pct: number; tone?: Tone }) {
  * hover TrendCurve. Shows the latest value by default; while dragging, a guide
  * line and a value bubble follow the finger.
  */
-export function ScrubChart({ data, labels, unit = "", color = colors.pink, height = 150 }: { data: number[]; labels?: string[]; unit?: string; color?: string; height?: number }) {
+/** `goal` draws a dashed target line across the chart and keeps it in range. */
+export function ScrubChart({ data, labels, unit = "", color = colors.pink, height = 150, goal }: { data: number[]; labels?: string[]; unit?: string; color?: string; height?: number; goal?: number | null }) {
   const [w, setW] = useState(320);
   const [hover, setHover] = useState<number | null>(null);
   const pad = 14;
-  const max = Math.max(...data);
-  const min = Math.min(...data);
+  const range = goal != null ? [...data, goal] : data;
+  const max = Math.max(...range);
+  const min = Math.min(...range);
   const span = max - min || 1;
   const x = (i: number) => pad + (i / Math.max(1, data.length - 1)) * (w - pad * 2);
   const y = (v: number) => height - pad - ((v - min) / span) * (height - pad * 2);
@@ -640,6 +642,7 @@ export function ScrubChart({ data, labels, unit = "", color = colors.pink, heigh
         </Defs>
         <Line x1={pad} x2={w - pad} y1={height - pad} y2={height - pad} stroke={colors.lineSoft} strokeWidth={1} />
         <Path d={`M${x(0)},${height - pad} L${line.split(" ").join(" L")} L${x(data.length - 1)},${height - pad} Z`} fill="url(#scrub-fill)" />
+        {goal != null ? <Line x1={pad} x2={w - pad} y1={y(goal)} y2={y(goal)} stroke={colors.lime} strokeWidth={1.5} strokeDasharray="5 4" /> : null}
         <Polyline points={line} fill="none" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
         {hover != null ? <Line x1={x(hi)} x2={x(hi)} y1={pad} y2={height - pad} stroke="rgba(255,255,255,0.22)" strokeWidth={1} /> : null}
         <SvgCircle cx={x(hi)} cy={y(data[hi])} r={5} fill={color} />

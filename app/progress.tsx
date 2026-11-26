@@ -15,6 +15,9 @@ import { Screen } from "@/components/ui/screen";
 import { Button, Chip, ProgressBar, SectionHeading } from "@/components/ui/controls";
 import { AreaChart, Card, Dial, EmptyState, MiniBars, PageHeader, PageSkeleton, PillTabs, ScrubChart, Segmented, Sheet, Sparkline } from "@/components/ui/extra";
 import { Label, Num, Text } from "@/components/ui/text";
+import { YearHeatmap } from "@/components/year-heatmap";
+import { liftBalance } from "@/lib/lift-balance";
+import { setDevicePrefs, useDevicePrefs } from "@/lib/device-prefs";
 import { Quiet } from "@/components/quiet";
 
 const RANGES = [
@@ -79,6 +82,9 @@ function ProgressScreen() {
   const muscles = useMuscleMap("month");
   const router = useRouter();
   const [measureOpen, setMeasureOpen] = useState(false);
+  const [goalOpen, setGoalOpen] = useState(false);
+  const dp = useDevicePrefs();
+  const goalDisp = dp.weightGoalKg != null ? fromKg(dp.weightGoalKg, units) : null;
 
   const liftOptions = useMemo(() => {
     const seen = new Map<string, string>();
@@ -126,6 +132,10 @@ function ProgressScreen() {
         ) : null}
       </Card>
 
+      <Card title="Last 12 months">
+        <YearHeatmap />
+      </Card>
+
       <Card title="Strength">
         {liftOptions.length === 0 ? <Text color="secondary">Log some sets and your estimated 1RM trend shows here.</Text> : (
           <View style={{ gap: 12 }}>
@@ -147,6 +157,33 @@ function ProgressScreen() {
           </View>
         )}
       </Card>
+
+      {(() => {
+        const bal = liftBalance(prs.data ?? []);
+        if (!bal) return null;
+        return (
+          <Card title="Lift ratios">
+            <Quiet widgetKey="progress-ratios">
+              <View style={{ gap: 14 }}>
+                {bal.rows.map((r) => (
+                  <View key={r.lift.key} style={{ gap: 5 }}>
+                    <View style={{ flexDirection: "row", alignItems: "baseline", justifyContent: "space-between" }}>
+                      <Text>{r.lift.label}</Text>
+                      <Text variant="meta" style={{ color: r.status === "below" ? colors.amber : r.status === "within" ? colors.lime : colors.textSecondary }}>
+                        {r.ratio == null ? `${Math.round(fromKg(r.e1rmKg, units))} ${u} est. 1RM` : `${r.ratio.toFixed(2)}× bench · usual ${r.lift.lo}–${r.lift.hi}×`}
+                      </Text>
+                    </View>
+                    {r.ratio != null ? <ProgressBar pct={Math.min(100, (r.ratio / (r.lift.hi * 1.25)) * 100)} tone={r.status === "below" ? "amber" : "lime"} height={5} /> : null}
+                  </View>
+                ))}
+                <Text variant="meta" color="tertiary">
+                  {bal.weakest ? `${bal.weakest.label} is your weakest link against your bench.` : "Your lifts sit in a balanced range against your bench."} A rough guide from estimated 1RMs on barbell lifts, not a prescription.
+                </Text>
+              </View>
+            </Quiet>
+          </Card>
+        );
+      })()}
 
       <Card title="Personal records">
         {(prs.data ?? []).length === 0 ? <Text color="secondary">Beat a previous best on any lift and it lands here automatically.</Text> : (
@@ -224,7 +261,13 @@ function ProgressScreen() {
           const last = sorted[sorted.length - 1];
           return (
             <Quiet widgetKey="progress-body"><View style={{ gap: 10 }}>
-              {w.length >= 2 ? <ScrubChart data={w} unit={u} height={110} /> : null}
+              {w.length >= 2 ? <ScrubChart data={w} unit={u} height={110} goal={goalDisp} /> : null}
+              {(() => {
+                const now = w[w.length - 1];
+                const toGo = goalDisp != null && now != null ? Math.round((goalDisp - now) * 10) / 10 : null;
+                const text = goalDisp == null ? "Set a goal weight to draw it across the chart" : toGo === 0 ? `At your goal of ${goalDisp} ${u}` : toGo == null ? `Goal ${goalDisp} ${u}` : `Goal ${goalDisp} ${u} · ${Math.abs(toGo)} ${u} ${toGo < 0 ? "to lose" : "to gain"}`;
+                return <Pressable onPress={() => setGoalOpen(true)} hitSlop={8} accessibilityLabel="Set goal weight"><Text variant="meta" color="pink">{text}{goalDisp != null ? " · edit" : ""}</Text></Pressable>;
+              })()}
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 14 }}>
                 {last?.weightKg ? <View><Num size={20}>{fromKg(last.weightKg, units)}</Num><Label>WEIGHT {u.toUpperCase()}</Label></View> : null}
                 {last?.bodyFatPct ? <View><Num size={20}>{last.bodyFatPct}%</Num><Label>BODY FAT</Label></View> : null}
@@ -235,8 +278,24 @@ function ProgressScreen() {
           );
         })()}
       </Card>
+      <GoalWeightSheet visible={goalOpen} units={units} current={goalDisp} onClose={() => setGoalOpen(false)} />
       <MeasureSheet visible={measureOpen} units={units} onClose={() => setMeasureOpen(false)} onSaved={() => { setMeasureOpen(false); meas.refetch(); }} />
     </Screen>
+  );
+}
+
+function GoalWeightSheet({ visible, units, current, onClose }: { visible: boolean; units: "metric" | "imperial"; current: number | null; onClose: () => void }) {
+  const [v, setV] = useState("");
+  const u = unitLabel(units);
+  const n = parseFloat(v.replace(",", "."));
+  const ok = Number.isFinite(n) && n > 0;
+  return (
+    <Sheet visible={visible} onClose={onClose} title="Goal weight" eyebrow="bodyweight">
+      <Text color="secondary">Draws a dashed line on your bodyweight chart and shows how far you are from it. Kept on this device.</Text>
+      <TextInput value={v} onChangeText={setV} keyboardType="decimal-pad" placeholder={current != null ? String(current) : `goal (${u})`} placeholderTextColor={colors.textTertiary} style={{ height: 52, borderRadius: 16, backgroundColor: colors.surfaceRecessed, paddingHorizontal: 14, color: colors.textPrimary, fontFamily: fonts.num, fontSize: 18 }} />
+      <Button label="Save goal" disabled={!ok} onPress={() => { setDevicePrefs({ weightGoalKg: Math.round(toKg(n, units) * 10) / 10 }); setV(""); onClose(); }} />
+      {current != null ? <Button label="Remove goal" variant="ghost" onPress={() => { setDevicePrefs({ weightGoalKg: null }); setV(""); onClose(); }} /> : null}
+    </Sheet>
   );
 }
 
