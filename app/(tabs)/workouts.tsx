@@ -59,6 +59,7 @@ export default function Workouts() {
   const [detail, setDetail] = useState<WorkoutSession | null>(null);
   const [menu, setMenu] = useState<{ title: string; actions: MenuAction[] } | null>(null);
   const [renaming, setRenaming] = useState<TemplateRow | null>(null);
+  const [editing, setEditing] = useState<WorkoutSession | null>(null);
   const [category, setCategory] = useState<TemplateCategory | "all">("all");
   const [diff, setDiff] = useState<Difficulty | "all">("all");
   const [month, setMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
@@ -107,6 +108,16 @@ export default function Workouts() {
       setBusy(null);
     }
   };
+  const deleteSession = (sess: WorkoutSession) =>
+    Alert.alert("Delete this workout?", `"${sess.name}" and any records it set will be removed. This can't be undone.`, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: () => void run("del-session", async () => { await api.sessions.remove(sess.id); setDetail(null); await refreshAll(); toast.success("Workout deleted"); }) },
+    ]);
+  const removeExercise = (sess: WorkoutSession, perfId: string, name: string) =>
+    Alert.alert(`Remove ${name}?`, "Its sets leave this workout and your records are re-read.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Remove", style: "destructive", onPress: () => void run("del-perf", async () => { await api.sessions.removePerformance(sess.id, perfId); const fresh = await api.sessions.get(sess.id); setDetail(fresh); await refreshAll(); }) },
+    ]);
   const openActive = () => {
     invalidateResource("active-session");
     router.push("/workout/active");
@@ -437,10 +448,16 @@ export default function Workouts() {
         title={detail?.name}
         eyebrow={detail ? fmtDate(detail.startedAt) : undefined}
         footer={detail ? (
-          <View style={{ flexDirection: "row", gap: 10 }}>
-            <View style={{ flex: 1 }}><Button label="Repeat" variant="accent" loading={busy === `repeat:${detail.id}`} onPress={() => repeat(detail)} /></View>
-            <View style={{ flex: 1 }}><Button label="Save as template" variant="ghost" loading={busy === "save"} onPress={() => run("save", async () => { await saveSessionAsTemplate(detail); afterTemplates(); toast.success("Saved to My templates"); })} /></View>
-          </View>
+          <>
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <View style={{ flex: 1 }}><Button label="Repeat" variant="accent" loading={busy === `repeat:${detail.id}`} onPress={() => repeat(detail)} /></View>
+              <View style={{ flex: 1 }}><Button label="Save as template" variant="ghost" loading={busy === "save"} onPress={() => run("save", async () => { await saveSessionAsTemplate(detail); afterTemplates(); toast.success("Saved to My templates"); })} /></View>
+            </View>
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <View style={{ flex: 1 }}><Button label="Edit details" variant="ghost" onPress={() => setEditing(detail)} /></View>
+              <View style={{ flex: 1 }}><Button label="Delete" variant="text" loading={busy === "del-session"} onPress={() => deleteSession(detail)} /></View>
+            </View>
+          </>
         ) : undefined}
       >
         {detail ? (
@@ -460,7 +477,10 @@ export default function Workouts() {
               const done = p.sets.filter((s) => s.completedAt);
               return (
                 <View key={p.id} style={{ gap: 4, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.lineSoft }}>
-                  <Text>{p.exercise.name}</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                    <Text style={{ flex: 1 }}>{p.exercise.name}</Text>
+                    <Button label="Remove" variant="text" onPress={() => removeExercise(detail, p.id, p.exercise.name)} />
+                  </View>
                   <Text variant="meta" color="tertiary">{done.map((s) => `${s.isWarmup ? "w " : ""}${s.weightKg != null ? fromKg(s.weightKg, units) : "BW"}×${s.reps ?? "—"}${s.isPersonalRecord ? " ★" : ""}`).join("   ") || "No sets logged"}</Text>
                 </View>
               );
@@ -468,6 +488,12 @@ export default function Workouts() {
           </>
         ) : null}
       </Sheet>
+
+      <EditSessionSheet
+        session={editing}
+        onClose={() => setEditing(null)}
+        onSave={(body) => editing && run("edit-session", async () => { const updated = await api.sessions.update(editing.id, body); setEditing(null); setDetail(updated); await refreshAll(); toast.success("Workout updated"); })}
+      />
 
       <ActionMenu visible={!!menu} onClose={() => setMenu(null)} title={menu?.title} actions={menu?.actions ?? []} />
       <RenameSheet row={renaming} onClose={() => setRenaming(null)} onSave={(name) => renaming && run(`rename:${renaming.id}`, async () => { await renameTemplate(renaming.id, name); afterTemplates(); setRenaming(null); toast.success("Renamed"); })} />
@@ -528,6 +554,53 @@ function SessionRow({ s, units, onPress, trailing }: { s: WorkoutSession; units:
         </View>
       )}
     </PressScale>
+  );
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+const ymd = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+/** Fix a finished workout's name, day and length. Records are re-read by the server. */
+function EditSessionSheet({ session, onClose, onSave }: { session: WorkoutSession | null; onClose: () => void; onSave: (b: { name?: string; startedAt?: string; durationSeconds?: number }) => void }) {
+  const [name, setName] = useState("");
+  const [date, setDate] = useState("");
+  const [mins, setMins] = useState("");
+  const [lastId, setLastId] = useState<string | null>(null);
+  if (session && session.id !== lastId) {
+    setLastId(session.id);
+    setName(session.name);
+    setDate(ymd(new Date(session.startedAt)));
+    setMins(String(Math.round(session.durationSeconds / 60)));
+  }
+  const m = Number(mins);
+  const dateOk = /^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(Date.parse(date));
+  const minsOk = mins.trim() !== "" && Number.isFinite(m) && m >= 0 && m <= 1440;
+  const valid = !!name.trim() && dateOk && minsOk;
+  const save = () => {
+    if (!session || !valid) return;
+    const body: { name?: string; startedAt?: string; durationSeconds?: number } = {};
+    if (name.trim() !== session.name) body.name = name.trim();
+    if (date !== ymd(new Date(session.startedAt))) {
+      // keep the original time of day, move only the day
+      const orig = new Date(session.startedAt);
+      const [y, mo, d] = date.split("-").map(Number);
+      body.startedAt = new Date(y, mo - 1, d, orig.getHours(), orig.getMinutes(), orig.getSeconds()).toISOString();
+    }
+    if (Math.round(m * 60) !== session.durationSeconds) body.durationSeconds = Math.round(m * 60);
+    if (!Object.keys(body).length) return onClose();
+    onSave(body);
+  };
+  const field = { height: 52, borderRadius: radius.small, backgroundColor: colors.surfaceRecessed, paddingHorizontal: 16, color: colors.textPrimary, fontFamily: fonts.regular, fontSize: 17 } as const;
+  return (
+    <Sheet visible={!!session} onClose={onClose} title="Edit workout" footer={<Button label="Save changes" disabled={!valid} onPress={save} />}>
+      <Label>NAME</Label>
+      <TextInput value={name} onChangeText={setName} maxLength={120} style={field} />
+      <Label>DATE (YYYY-MM-DD)</Label>
+      <TextInput value={date} onChangeText={setDate} maxLength={10} autoCapitalize="none" keyboardType="numbers-and-punctuation" style={field} />
+      <Label>DURATION (MINUTES)</Label>
+      <TextInput value={mins} onChangeText={setMins} maxLength={4} keyboardType="number-pad" style={field} />
+      {!dateOk && date ? <Text variant="meta" style={{ color: colors.amber }}>Use a date like 2026-11-20 (not in the future).</Text> : null}
+    </Sheet>
   );
 }
 
