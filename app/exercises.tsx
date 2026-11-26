@@ -18,6 +18,7 @@ import { PageHeader, Sheet } from "@/components/ui/extra";
 import { PressScale } from "@/components/ui/pressable";
 import { Reveal } from "@/components/ui/reveal";
 import { Label, Text } from "@/components/ui/text";
+import { fuzzyFilter } from "@/lib/fuzzy";
 
 const MUSCLES = ["All", "Chest", "Back", "Lats", "Shoulders", "Biceps", "Triceps", "Glutes", "Quads", "Hamstrings", "Abs", "Calves"];
 const EQUIPMENT = ["All", "Barbell", "Dumbbell", "Kettlebell", "Cable", "Machine", "Bodyweight", "Bands"];
@@ -34,13 +35,9 @@ export default function ExerciseLibrary() {
   const needleRaw = useDeferredValue(q);
 
   const filtered = useMemo(() => {
-    const needle = needleRaw.trim().toLowerCase();
-    return catalog.filter((e) => {
-      if (muscle !== "All" && ![...e.primary, ...e.secondary].includes(muscle)) return false;
-      if (equipment !== "All" && e.equipment !== equipment) return false;
-      if (!needle) return true;
-      return e.name.toLowerCase().includes(needle) || e.equipment.toLowerCase().includes(needle) || e.bodyPart.toLowerCase().includes(needle) || [...e.primary, ...e.secondary].some((m) => m.toLowerCase().includes(needle));
-    });
+    const pool = catalog.filter((e) => (muscle === "All" || [...e.primary, ...e.secondary].includes(muscle)) && (equipment === "All" || e.equipment === equipment));
+    // typo-tolerant: "benc pres" and "dumbell curl" still find their exercise; exact and prefix hits rank first
+    return fuzzyFilter(pool, needleRaw, (e) => `${e.name} ${e.equipment} ${e.bodyPart} ${[...e.primary, ...e.secondary].join(" ")}`, (e) => e.name);
   }, [catalog, needleRaw, muscle, equipment]);
   const [limit, setLimit] = useState(LIMIT);
   useEffect(() => setLimit(LIMIT), [needleRaw, muscle, equipment]);

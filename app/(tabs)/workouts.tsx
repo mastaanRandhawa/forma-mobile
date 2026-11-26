@@ -5,7 +5,7 @@
  * check-in gate when the user asked to be prompted before their first workout.
  */
 import { useMemo, useState } from "react";
-import { Alert, TextInput, View } from "react-native";
+import { Alert, Share, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { api } from "@/api/client";
@@ -16,7 +16,7 @@ import type { Program, WorkoutSession } from "@/api/types";
 import { CATEGORY_LABEL, WORKOUT_TEMPLATES, recommendTemplates, templateExerciseTarget, type Difficulty, type TemplateCategory } from "@/lib/workout-templates";
 import { GOAL_LABELS } from "@/lib/profile-options";
 import { supersetLetter } from "@/lib/active-session";
-import { deleteTemplate, duplicateTemplate, fmtDuration, fromKg, presetToRow, renameTemplate, saveSessionAsTemplate, startFromRow, startQuick, startRepeat, unitLabel, workoutToRow, type TemplateRow, type Units } from "@/lib/workouts";
+import { shareText, deleteTemplate, duplicateTemplate, fmtDuration, fromKg, presetToRow, renameTemplate, saveSessionAsTemplate, startFromRow, startQuick, startRepeat, unitLabel, workoutToRow, type TemplateRow, type Units } from "@/lib/workouts";
 import { useTheme } from "@/theme/theme-provider";
 import { HIT, colors, fonts, iconSize, radius } from "@/theme/tokens";
 import { useCheckinGate } from "@/components/checkin";
@@ -154,12 +154,14 @@ export default function Workouts() {
               { label: "Start workout", icon: "play-outline", onPress: () => startRow(row) },
               { label: "Customize", icon: "create-outline", hint: "Edit a copy in the builder", onPress: () => router.push({ pathname: "/workout/builder", params: { from: row.id } }) },
               { label: "Save a copy", icon: "copy-outline", onPress: () => saveCopy(row) },
+              { label: "Share", icon: "share-outline", hint: "Send this routine as text", onPress: () => void Share.share({ message: shareText(row) }) },
             ]
           : [
               { label: "Start workout", icon: "play-outline", onPress: () => startRow(row) },
               { label: "Edit", icon: "create-outline", onPress: () => router.push({ pathname: "/workout/builder", params: { id: row.id } }) },
               { label: "Duplicate", icon: "copy-outline", onPress: () => run(`dup:${row.id}`, async () => { await duplicateTemplate(row); afterTemplates(); toast.success("Duplicated"); }) },
               { label: "Rename", icon: "text-outline", onPress: () => setRenaming(row) },
+              { label: "Share", icon: "share-outline", hint: "Send this routine as text", onPress: () => void Share.share({ message: shareText(row) }) },
               { label: "Delete", icon: "trash-outline", destructive: true, onPress: () => confirmDelete(row) },
             ],
     });

@@ -26,6 +26,17 @@ export interface TemplateRow {
   _api?: Workout;
 }
 
+/**
+ * A routine as text someone can read in a message, with a JSON block under it
+ * so another copy of the app can read it back. Only the routine itself: no
+ * workouts, weigh-ins or account details.
+ */
+export function shareText(row: TemplateRow): string {
+  const lines = row.exercises.map((e) => `• ${e.name} — ${e.sets} × ${repRange(e.repsMin ?? null, e.repsMax ?? null)}`);
+  const payload = { forma: 1, routine: { name: row.name, description: row.description, exercises: row.exercises.map((e) => ({ name: e.name, sets: e.sets, repsMin: e.repsMin, repsMax: e.repsMax, restSec: e.restSec })) } };
+  return `${row.name} (${row.exerciseCount} exercises, ~${row.durationMin} min)\n${lines.join("\n")}\n\n${JSON.stringify(payload)}`;
+}
+
 const normName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
 /** Resolve a preset exercise name to a backend exercise id (exact → contains → first hit). */

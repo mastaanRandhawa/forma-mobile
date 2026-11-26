@@ -19,6 +19,10 @@ export interface DevicePrefs {
   workoutClock?: boolean;
   /** active workout: always show the rest countdown digits (otherwise only the bar, plus the last 10 s) */
   restCountdown?: boolean;
+  /** how effort per set is shown and entered: RPE (1–10) or RIR (reps in reserve) */
+  effortScale?: "rpe" | "rir";
+  /** target bodyweight in kg, drawn as a goal line on the bodyweight chart */
+  weightGoalKg?: number | null;
 }
 
 const KEY = "forma.device-prefs.v1";
