@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Pressable, TextInput, View } from "react-native";
+import { Alert, Pressable, TextInput, View } from "react-native";
 import { useRouter } from "expo-router";
 import { api } from "@/api/client";
 import { errorMessage, invalidateResource, useConsistency, useMuscleMap, useProgressOverview, useReadiness, useResource } from "@/api/hooks";
@@ -82,6 +82,7 @@ function ProgressScreen() {
   const muscles = useMuscleMap("month");
   const router = useRouter();
   const [measureOpen, setMeasureOpen] = useState(false);
+  const [editMeasure, setEditMeasure] = useState<BodyMeasurement | null>(null);
   const [goalOpen, setGoalOpen] = useState(false);
   const dp = useDevicePrefs();
   const goalDisp = dp.weightGoalKg != null ? fromKg(dp.weightGoalKg, units) : null;
@@ -279,7 +280,23 @@ function ProgressScreen() {
         })()}
       </Card>
       <GoalWeightSheet visible={goalOpen} units={units} current={goalDisp} onClose={() => setGoalOpen(false)} />
-      <MeasureSheet visible={measureOpen} units={units} onClose={() => setMeasureOpen(false)} onSaved={() => { setMeasureOpen(false); meas.refetch(); }} />
+      {(meas.data ?? []).length > 0 ? (
+        <>
+          <SectionHeading title="Entries" />
+          <Card variant="compact">
+            <View style={{ gap: 2 }}>
+              {[...(meas.data ?? [])].sort((a, b) => Date.parse(b.recordedAt ?? "") - Date.parse(a.recordedAt ?? "")).slice(0, 8).map((m) => (
+                <Pressable key={m.id} onPress={() => setEditMeasure(m)} accessibilityRole="button" accessibilityLabel={`Edit entry from ${m.recordedAt ? new Date(m.recordedAt).toLocaleDateString() : "unknown date"}`} style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 10, gap: 10 }}>
+                  <Text style={{ flex: 1 }} numberOfLines={1}>{m.recordedAt ? new Date(m.recordedAt).toLocaleDateString() : "—"}</Text>
+                  <Text variant="meta" color="secondary" numberOfLines={1}>{[m.weightKg ? `${fromKg(m.weightKg, units)} ${u}` : null, m.bodyFatPct ? `${m.bodyFatPct}%` : null, m.waistCm ? `waist ${units === "metric" ? m.waistCm : Math.round((m.waistCm / 2.54) * 10) / 10}` : null].filter(Boolean).join(" · ") || "—"}</Text>
+                  <Text variant="meta" color="pink">Edit</Text>
+                </Pressable>
+              ))}
+            </View>
+          </Card>
+        </>
+      ) : null}
+      <MeasureSheet key={editMeasure?.id ?? "new"} visible={measureOpen || !!editMeasure} entry={editMeasure} units={units} onClose={() => { setMeasureOpen(false); setEditMeasure(null); }} onSaved={() => { setMeasureOpen(false); setEditMeasure(null); meas.refetch(); }} />
     </Screen>
   );
 }
@@ -299,17 +316,31 @@ function GoalWeightSheet({ visible, units, current, onClose }: { visible: boolea
   );
 }
 
-function MeasureSheet({ visible, units, onClose, onSaved }: { visible: boolean; units: "metric" | "imperial"; onClose: () => void; onSaved: () => void }) {
+function MeasureSheet({ visible, units, entry, onClose, onSaved }: { visible: boolean; units: "metric" | "imperial"; entry?: BodyMeasurement | null; onClose: () => void; onSaved: () => void }) {
   const metric = units === "metric";
-  const [v, setV] = useState({ weight: "", bodyFat: "", waist: "", chest: "", arm: "" });
+  const show = (x: number | null | undefined, conv?: (n: number) => number) => (x == null ? "" : String(conv ? conv(x) : x));
+  const inch = (cmv: number) => Math.round((cmv / 2.54) * 10) / 10;
+  const [v, setV] = useState(() => entry ? { weight: show(entry.weightKg, (k) => fromKg(k, units)), bodyFat: show(entry.bodyFatPct), waist: show(entry.waistCm, metric ? undefined : inch), chest: show(entry.chestCm, metric ? undefined : inch), arm: show(entry.armCm, metric ? undefined : inch) } : { weight: "", bodyFat: "", waist: "", chest: "", arm: "" });
   const [busy, setBusy] = useState(false);
   const n = (s: string) => { const x = parseFloat(s.replace(",", ".")); return Number.isFinite(x) && x > 0 ? x : undefined; };
   const cm = (s: string) => { const x = n(s); return x == null ? undefined : metric ? x : Math.round(x * 2.54 * 10) / 10; };
   const any = Object.values(v).some((x) => n(x) != null);
+  const remove = () =>
+    Alert.alert("Delete this entry?", "It's removed from your history and charts. This can't be undone.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: async () => { if (!entry) return; setBusy(true); try { await api.progress.deleteMeasurement(entry.id); invalidateResource("measurements"); toast.success("Entry deleted"); onSaved(); } catch (e) { toast.error(errorMessage(e as Error)); } finally { setBusy(false); } } },
+    ]);
   const save = async () => {
     setBusy(true);
     try {
       const w = n(v.weight);
+      if (entry) {
+        await api.progress.updateMeasurement(entry.id, { weightKg: w != null ? toKg(w, units) : null, bodyFatPct: n(v.bodyFat) ?? null, waistCm: cm(v.waist) ?? null, chestCm: cm(v.chest) ?? null, armCm: cm(v.arm) ?? null });
+        invalidateResource("measurements");
+        toast.success("Entry updated");
+        onSaved();
+        return;
+      }
       await api.progress.addMeasurement({ weightKg: w != null ? toKg(w, units) : undefined, bodyFatPct: n(v.bodyFat), waistCm: cm(v.waist), chestCm: cm(v.chest), armCm: cm(v.arm) });
       if (w != null) await api.me.update({ weightKg: toKg(w, units) }).catch(() => {});
       invalidateResource("measurements");
@@ -330,7 +361,7 @@ function MeasureSheet({ visible, units, onClose, onSaved }: { visible: boolean; 
     </View>
   );
   return (
-    <Sheet visible={visible} onClose={onClose} title="Log measurement" eyebrow="Body" footer={<Button label="Save" variant="accent" loading={busy} disabled={!any} onPress={save} />}>
+    <Sheet visible={visible} onClose={onClose} title={entry ? "Edit entry" : "Log measurement"} eyebrow={entry?.recordedAt ? new Date(entry.recordedAt).toLocaleDateString() : "Body"} footer={<><Button label={entry ? "Save changes" : "Save"} variant="accent" loading={busy} disabled={!any} onPress={save} />{entry ? <Button label="Delete entry" variant="text" onPress={remove} /> : null}</>}>
       <Text variant="meta" color="tertiary">Fill in whatever you measured today — everything is optional.</Text>
       {row("weight", "Bodyweight", metric ? "kg" : "lb")}
       {row("bodyFat", "Body fat", "%")}

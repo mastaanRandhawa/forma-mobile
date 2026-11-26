@@ -5,18 +5,18 @@
  * check-in gate when the user asked to be prompted before their first workout.
  */
 import { useMemo, useState } from "react";
-import { Alert, Share, TextInput, View } from "react-native";
+import { Alert, Pressable, Share, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { api } from "@/api/client";
 import { errorMessage, invalidateResource, useMuscleBalance, usePlannedWorkouts, useResource, useSessionHistory, useWorkoutTemplates } from "@/api/hooks";
 import { useProgression } from "@/api/settings";
 import { useAuth } from "@/auth/auth-provider";
-import type { Program, WorkoutSession } from "@/api/types";
+import type { ExerciseSet, Program, WorkoutSession } from "@/api/types";
 import { CATEGORY_LABEL, WORKOUT_TEMPLATES, recommendTemplates, templateExerciseTarget, type Difficulty, type TemplateCategory } from "@/lib/workout-templates";
 import { GOAL_LABELS } from "@/lib/profile-options";
 import { supersetLetter } from "@/lib/active-session";
-import { shareText, deleteTemplate, duplicateTemplate, fmtDuration, fromKg, presetToRow, renameTemplate, saveSessionAsTemplate, startFromRow, startQuick, startRepeat, unitLabel, workoutToRow, type TemplateRow, type Units } from "@/lib/workouts";
+import { shareText, deleteTemplate, duplicateTemplate, fmtDuration, fromKg, presetToRow, renameTemplate, saveSessionAsTemplate, startFromRow, startQuick, startRepeat, toKg, unitLabel, workoutToRow, type TemplateRow, type Units } from "@/lib/workouts";
 import { useTheme } from "@/theme/theme-provider";
 import { HIT, colors, fonts, iconSize, radius } from "@/theme/tokens";
 import { useCheckinGate } from "@/components/checkin";
@@ -60,6 +60,8 @@ export default function Workouts() {
   const [menu, setMenu] = useState<{ title: string; actions: MenuAction[] } | null>(null);
   const [renaming, setRenaming] = useState<TemplateRow | null>(null);
   const [editing, setEditing] = useState<WorkoutSession | null>(null);
+  const [programsOpen, setProgramsOpen] = useState(false);
+  const [setEdit, setSetEdit] = useState<SetEdit | null>(null);
   const [category, setCategory] = useState<TemplateCategory | "all">("all");
   const [diff, setDiff] = useState<Difficulty | "all">("all");
   const [month, setMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
@@ -239,11 +241,12 @@ export default function Workouts() {
 
       {tab === "today" && (
         <View style={{ marginTop: 20, gap: 20 }}>
-          {week ? (
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, minHeight: 44, borderRadius: radius.small, backgroundColor: week.deload ? "rgba(131,233,244,0.10)" : colors.surface }}>
-              <Ionicons name="calendar-outline" size={iconSize.sm} color={week.deload ? colors.cyan : colors.textTertiary} />
-              <Text variant="meta" color="secondary" style={{ flex: 1 }} numberOfLines={2}>{week.name} · week {week.current}/{week.total}{week.deload ? " · deload week" : week.current < week.total && week.current % 4 === 3 ? " · deload next week" : ""}</Text>
-            </View>
+          {week || (programs.data ?? []).length > 0 ? (
+            <Pressable onPress={() => setProgramsOpen(true)} accessibilityRole="button" accessibilityLabel="Manage programs" style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, minHeight: 44, borderRadius: radius.small, backgroundColor: week?.deload ? "rgba(131,233,244,0.10)" : colors.surface }}>
+              <Ionicons name="calendar-outline" size={iconSize.sm} color={week?.deload ? colors.cyan : colors.textTertiary} />
+              <Text variant="meta" color="secondary" style={{ flex: 1 }} numberOfLines={2}>{week ? `${week.name} · week ${week.current}/${week.total}${week.deload ? " · deload week" : week.current < week.total && week.current % 4 === 3 ? " · deload next week" : ""}` : "No active program"}</Text>
+              <Text variant="meta" color="pink">Manage</Text>
+            </Pressable>
           ) : null}
 
           {active.data ? (
@@ -474,20 +477,68 @@ export default function Workouts() {
             ) : null}
             {detail.trainerComment ? <View style={{ padding: 12, borderRadius: radius.small, backgroundColor: colors.surface, gap: 4 }}><Label>FROM YOUR TRAINER</Label><Text color="secondary">{detail.trainerComment}</Text></View> : null}
             {detail.performances.map((p) => {
-              const done = p.sets.filter((s) => s.completedAt);
+              const done = p.sets.filter((s) => s.completedAt).sort((a, b) => a.setNumber - b.setNumber);
               return (
                 <View key={p.id} style={{ gap: 4, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.lineSoft }}>
                   <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
                     <Text style={{ flex: 1 }}>{p.exercise.name}</Text>
                     <Button label="Remove" variant="text" onPress={() => removeExercise(detail, p.id, p.exercise.name)} />
                   </View>
-                  <Text variant="meta" color="tertiary">{done.map((s) => `${s.isWarmup ? "w " : ""}${s.weightKg != null ? fromKg(s.weightKg, units) : "BW"}×${s.reps ?? "—"}${s.isPersonalRecord ? " ★" : ""}`).join("   ") || "No sets logged"}</Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                    {done.map((st) => (
+                      <Pressable key={st.id} onPress={() => setSetEdit({ perfId: p.id, name: p.exercise.name, set: st })} accessibilityRole="button" accessibilityLabel={`Edit set ${st.setNumber} of ${p.exercise.name}`} style={{ paddingHorizontal: 10, height: 30, borderRadius: radius.pill, backgroundColor: colors.surface, justifyContent: "center" }}>
+                        <Text variant="meta" color="secondary">{`${st.isWarmup ? "w " : ""}${st.weightKg != null ? fromKg(st.weightKg, units) : "BW"}×${st.reps ?? "—"}${st.isPersonalRecord ? " ★" : ""}`}</Text>
+                      </Pressable>
+                    ))}
+                    <Pressable onPress={() => setSetEdit({ perfId: p.id, name: p.exercise.name, set: null, nextNumber: Math.max(0, ...p.sets.map((x) => x.setNumber)) + 1, like: done[done.length - 1] ?? null })} accessibilityRole="button" accessibilityLabel={`Add a set to ${p.exercise.name}`} style={{ paddingHorizontal: 10, height: 30, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.lineSoft, justifyContent: "center" }}>
+                      <Text variant="meta" color="pink">+ set</Text>
+                    </Pressable>
+                    {done.length === 0 ? <Text variant="meta" color="tertiary">No sets logged</Text> : null}
+                  </View>
                 </View>
               );
             })}
           </>
         ) : null}
       </Sheet>
+
+      <Sheet visible={programsOpen} onClose={() => setProgramsOpen(false)} title="Programs" eyebrow="Multi-week plans">
+        {(programs.data ?? []).length === 0 ? <Text color="secondary">No programs yet. Ask your trainer to build one.</Text> : (programs.data ?? []).map((p) => (
+          <View key={p.id} style={{ gap: 8, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.lineSoft }}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <View style={{ flex: 1 }}>
+                <Text numberOfLines={2}>{p.name}</Text>
+                <Text variant="meta" color="tertiary">{p.durationWeeks} weeks{p.active ? " · active" : ""}</Text>
+              </View>
+            </View>
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              {!p.active ? <View style={{ flex: 1 }}><Button label="Make active" variant="ghost" loading={busy === `activate:${p.id}`} onPress={() => run(`activate:${p.id}`, async () => { await api.programs.activate(p.id); await programs.reload(); invalidateResource("dashboard"); toast.success(`${p.name} is now active`); })} /></View> : null}
+              <View style={{ flex: 1 }}><Button label="Delete" variant="text" loading={busy === `delprog:${p.id}`} onPress={() => Alert.alert("Delete this program?", `"${p.name}" and its schedule are removed. Finished workouts stay in your history.`, [{ text: "Cancel", style: "cancel" }, { text: "Delete", style: "destructive", onPress: () => void run(`delprog:${p.id}`, async () => { await api.programs.remove(p.id); await programs.reload(); invalidateResource("dashboard"); toast.success("Program deleted"); }) }])} /></View>
+            </View>
+          </View>
+        ))}
+      </Sheet>
+
+      <SetEditSheet
+        key={setEdit ? `${setEdit.perfId}:${setEdit.set?.id ?? "new"}` : "none"}
+        edit={setEdit}
+        units={units}
+        onClose={() => setSetEdit(null)}
+        onSave={(v) => detail && setEdit && run("set", async () => {
+          const n = setEdit.set?.setNumber ?? setEdit.nextNumber ?? 1;
+          await api.sessions.logSet(detail.id, setEdit.perfId, n, { weightKg: v.weightKg, reps: v.reps, ...(setEdit.set ? {} : { completed: true }) });
+          setDetail(await api.sessions.get(detail.id));
+          setSetEdit(null);
+          await refreshAll();
+        })}
+        onDelete={() => detail && setEdit?.set && run("set", async () => {
+          await api.sessions.deleteSet(detail.id, setEdit.perfId, setEdit.set!.setNumber);
+          setDetail(await api.sessions.get(detail.id));
+          setSetEdit(null);
+          await refreshAll();
+        })}
+        busy={busy === "set"}
+      />
 
       <EditSessionSheet
         session={editing}
@@ -554,6 +605,28 @@ function SessionRow({ s, units, onPress, trailing }: { s: WorkoutSession; units:
         </View>
       )}
     </PressScale>
+  );
+}
+
+interface SetEdit { perfId: string; name: string; set: ExerciseSet | null; nextNumber?: number; like?: ExerciseSet | null }
+
+/** Fix one set in a finished workout, add a missed set, or delete one. Records are re-read by the server. */
+function SetEditSheet({ edit, units, onClose, onSave, onDelete, busy }: { edit: SetEdit | null; units: Units; onClose: () => void; onSave: (v: { weightKg: number | null; reps: number | null }) => void; onDelete: () => void; busy: boolean }) {
+  const src = edit?.set ?? edit?.like ?? null;
+  const [w, setW] = useState(src?.weightKg != null ? String(fromKg(src.weightKg, units)) : "");
+  const [r, setR] = useState(src?.reps != null ? String(src.reps) : "");
+  const wn = w.trim() === "" ? null : Number(w.replace(",", "."));
+  const rn = r.trim() === "" ? null : Number(r);
+  const ok = (wn == null || (Number.isFinite(wn) && wn >= 0)) && (rn == null || (Number.isInteger(rn) && rn >= 0)) && (wn != null || rn != null);
+  const field = { height: 52, borderRadius: radius.small, backgroundColor: colors.surfaceRecessed, paddingHorizontal: 16, color: colors.textPrimary, fontFamily: fonts.num, fontSize: 20 } as const;
+  return (
+    <Sheet visible={!!edit} onClose={onClose} title={edit?.set ? `Set ${edit.set.setNumber}` : "Add a set"} eyebrow={edit?.name}
+      footer={<><Button label={edit?.set ? "Save set" : "Add set"} variant="accent" loading={busy} disabled={!ok} onPress={() => onSave({ weightKg: wn == null ? null : toKg(wn, units), reps: rn })} />{edit?.set ? <Button label="Delete set" variant="text" onPress={() => Alert.alert("Delete this set?", "Volume and records are recalculated.", [{ text: "Cancel", style: "cancel" }, { text: "Delete", style: "destructive", onPress: onDelete }])} /> : null}</>}>
+      <Label>WEIGHT ({unitLabel(units).toUpperCase()}) · BLANK FOR BODYWEIGHT</Label>
+      <TextInput value={w} onChangeText={setW} keyboardType="decimal-pad" placeholder="BW" placeholderTextColor={colors.textTertiary} style={field} />
+      <Label>REPS</Label>
+      <TextInput value={r} onChangeText={setR} keyboardType="number-pad" placeholder="0" placeholderTextColor={colors.textTertiary} style={field} />
+    </Sheet>
   );
 }
 
