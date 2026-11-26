@@ -5,7 +5,7 @@
  * check-in gate when the user asked to be prompted before their first workout.
  */
 import { useMemo, useState } from "react";
-import { Alert, Share, TextInput, View } from "react-native";
+import { Alert, Pressable, Share, TextInput, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { api } from "@/api/client";
@@ -60,6 +60,7 @@ export default function Workouts() {
   const [menu, setMenu] = useState<{ title: string; actions: MenuAction[] } | null>(null);
   const [renaming, setRenaming] = useState<TemplateRow | null>(null);
   const [editing, setEditing] = useState<WorkoutSession | null>(null);
+  const [programsOpen, setProgramsOpen] = useState(false);
   const [category, setCategory] = useState<TemplateCategory | "all">("all");
   const [diff, setDiff] = useState<Difficulty | "all">("all");
   const [month, setMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
@@ -239,11 +240,12 @@ export default function Workouts() {
 
       {tab === "today" && (
         <View style={{ marginTop: 20, gap: 20 }}>
-          {week ? (
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, minHeight: 44, borderRadius: radius.small, backgroundColor: week.deload ? "rgba(131,233,244,0.10)" : colors.surface }}>
-              <Ionicons name="calendar-outline" size={iconSize.sm} color={week.deload ? colors.cyan : colors.textTertiary} />
-              <Text variant="meta" color="secondary" style={{ flex: 1 }} numberOfLines={2}>{week.name} · week {week.current}/{week.total}{week.deload ? " · deload week" : week.current < week.total && week.current % 4 === 3 ? " · deload next week" : ""}</Text>
-            </View>
+          {week || (programs.data ?? []).length > 0 ? (
+            <Pressable onPress={() => setProgramsOpen(true)} accessibilityRole="button" accessibilityLabel="Manage programs" style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, minHeight: 44, borderRadius: radius.small, backgroundColor: week?.deload ? "rgba(131,233,244,0.10)" : colors.surface }}>
+              <Ionicons name="calendar-outline" size={iconSize.sm} color={week?.deload ? colors.cyan : colors.textTertiary} />
+              <Text variant="meta" color="secondary" style={{ flex: 1 }} numberOfLines={2}>{week ? `${week.name} · week ${week.current}/${week.total}${week.deload ? " · deload week" : week.current < week.total && week.current % 4 === 3 ? " · deload next week" : ""}` : "No active program"}</Text>
+              <Text variant="meta" color="pink">Manage</Text>
+            </Pressable>
           ) : null}
 
           {active.data ? (
@@ -487,6 +489,23 @@ export default function Workouts() {
             })}
           </>
         ) : null}
+      </Sheet>
+
+      <Sheet visible={programsOpen} onClose={() => setProgramsOpen(false)} title="Programs" eyebrow="Multi-week plans">
+        {(programs.data ?? []).length === 0 ? <Text color="secondary">No programs yet. Ask your trainer to build one.</Text> : (programs.data ?? []).map((p) => (
+          <View key={p.id} style={{ gap: 8, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.lineSoft }}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <View style={{ flex: 1 }}>
+                <Text numberOfLines={2}>{p.name}</Text>
+                <Text variant="meta" color="tertiary">{p.durationWeeks} weeks{p.active ? " · active" : ""}</Text>
+              </View>
+            </View>
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              {!p.active ? <View style={{ flex: 1 }}><Button label="Make active" variant="ghost" loading={busy === `activate:${p.id}`} onPress={() => run(`activate:${p.id}`, async () => { await api.programs.activate(p.id); await programs.reload(); invalidateResource("dashboard"); toast.success(`${p.name} is now active`); })} /></View> : null}
+              <View style={{ flex: 1 }}><Button label="Delete" variant="text" loading={busy === `delprog:${p.id}`} onPress={() => Alert.alert("Delete this program?", `"${p.name}" and its schedule are removed. Finished workouts stay in your history.`, [{ text: "Cancel", style: "cancel" }, { text: "Delete", style: "destructive", onPress: () => void run(`delprog:${p.id}`, async () => { await api.programs.remove(p.id); await programs.reload(); invalidateResource("dashboard"); toast.success("Program deleted"); }) }])} /></View>
+            </View>
+          </View>
+        ))}
       </Sheet>
 
       <EditSessionSheet
